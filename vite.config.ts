@@ -1,4 +1,10 @@
 import { fileURLToPath, URL } from 'node:url'
+import { webcrypto } from 'node:crypto'
+
+// Polyfill for environments where crypto.getRandomValues is missing
+if (!globalThis.crypto?.getRandomValues) {
+  globalThis.crypto = webcrypto as any
+}
 
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
