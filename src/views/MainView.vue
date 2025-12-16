@@ -2,12 +2,43 @@
   <div class="container">
     <!-- Fullscreen Modal Component -->
     <FullscreenModal
+      v-if="isFaceVerified"
       @fullscreenExit="handleFullscreenExit"
       @tabSwitch="handleTabSwitch"
       @appSwitch="handleAppSwitch"
       @pageLeave="handlePageLeave"
-      @screenRecordingStarted="handleScreenRecordingStarted"
     />
+
+    <!-- Verification Overlay -->
+    <div v-if="!isFaceVerified && video" class="verification-overlay">
+      <div class="verification-box">
+        <h2>Imtixonni Boshlash</h2>
+        
+        <div v-if="!capturedPhoto">
+          <p>Iltimos, imtixonni boshlash uchun yuzingizni tasdiqlang</p>
+          <!-- Live Preview inside modal -->
+          <div class="live-preview-container">
+            <video ref="previewVideo" class="live-preview" autoplay muted playsinline></video>
+          </div>
+          <button @click="takePhoto" class="verify-btn">Rasmga olish</button>
+        </div>
+
+        <div v-else>
+          <img :src="capturedPhoto" class="captured-preview" />
+          <p v-if="text" style="color: red; margin: 10px 0;">{{ text }}</p>
+          <div class="buttons-row">
+            <button @click="retakePhoto" class="verify-btn secondary">Qayta olish</button>
+            <button 
+              @click="confirmVerification" 
+              class="verify-btn"
+              :disabled="isVerifying"
+            >
+              {{ isVerifying ? 'Yuborilmoqda...' : 'Yuborish' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div class="camera-container">
       <video ref="video" class="video" autoplay muted playsinline></video>
@@ -24,28 +55,82 @@
 </template>
 
 <script lang="ts" setup >
+// =============================================================================
+// IMPORTS
+// =============================================================================
+
 import { ref, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import * as faceapi from 'face-api.js'
 import FullscreenModal from '@/components/FullscreenModal.vue'
 
+// =============================================================================
+// TYPES & INTERFACES
+// =============================================================================
+
+/** Structure of exam error definitions from API */
+interface ExamError {
+  id: number
+  name1: string
+  name2: string
+  name3: string
+  name4: string
+  long01: string
+}
+
+// =============================================================================
+// CONFIGURATION CONSTANTS
+// =============================================================================
+
+const API_BASE_URL = 'https://kasbiy-talim.uz/services/platon-core/api'
+const RATE_LIMIT_MS = 3000           // Error reporting cooldown (ms)
+const HISTORY_LENGTH = 5             // Frames to average for smoothing
+
+// =============================================================================
+// ROUTE & EXAM STATE
+// =============================================================================
+
+const route = useRoute()
+const examId = ref(route.query.exam_id as string || '')
+
+// =============================================================================
+// ERROR TRACKING STATE
+// =============================================================================
+
+const errorList = ref<ExamError[]>([])
+const sessionErrors = ref<any[]>([])
+const lastReportedAt = ref<Record<number, number>>({})  // Rate limiting map
+const violationCount = ref<number>(0)
+
+// =============================================================================
+// UI STATE
+// =============================================================================
+
+const isInside = ref<boolean>(false)        // Face within boundary circle
+const realUser = ref<boolean>(false)        // Liveness flag
+const text = ref<string>("")                // Status message display
+const isFaceVerified = ref<boolean>(false)  // Verification complete flag
+const isVerifying = ref<boolean>(false)     // Verification in progress
+
+// =============================================================================
+// VIDEO ELEMENTS
+// =============================================================================
+
 const video = ref<HTMLVideoElement | null>(null)
 const overlay = ref<HTMLCanvasElement | null>(null)
-const isInside = ref<boolean>(false)
-const realUser = ref<boolean>(false)
-const text = ref<string>("")
+const previewVideo = ref<HTMLVideoElement | null>(null)
+const capturedPhoto = ref<string | null>(null)
 
-// Monitoring violation states
-const violationCount = ref<number>(0)
+// =============================================================================
+// FULLSCREEN STATE
+// =============================================================================
+
 const isFullscreenMode = ref<boolean>(false)
-// Screen recording
-const screenStream = ref<MediaStream | null>(null)
-let mediaRecorder: MediaRecorder | null = null
-let recordedChunks: Blob[] = []
-const MAX_UPLOAD_BYTES = 256 * 1024 * 1024 // 256MB
-const isRecording = ref<boolean>(false)
-let photoInterval: number | null = null
 
-// Microphone and audio monitoring
+// =============================================================================
+// MICROPHONE & AUDIO STATE
+// =============================================================================
+
 const audioStream = ref<MediaStream | null>(null)
 const audioContext = ref<AudioContext | null>(null)
 const analyser = ref<AnalyserNode | null>(null)
@@ -54,6 +139,7 @@ const bandpass = ref<BiquadFilterNode | null>(null)
 const isMicrophoneActive = ref<boolean>(false)
 const audioLevel = ref<number>(0)
 const isSpeaking = ref<boolean>(false)
+
 // Adaptive noise gate & hysteresis
 const noiseFloor = ref<number>(0)
 const rmsLevel = ref<number>(0)
@@ -63,19 +149,179 @@ let lastMicViolationAt = 0
 let attackFrames = 0
 let releaseFrames = 0
 
+// =============================================================================
+// FACE DETECTION SMOOTHING
+// =============================================================================
 
-// Smoothing variables for better stability
-const earHistory = ref<number[]>([])
-const pitchHistory = ref<number[]>([])
-const turnHistory = ref<number[]>([])
-const HISTORY_LENGTH = 5  // Number of frames to average
+const earHistory = ref<number[]>([])    // Eye Aspect Ratio history
+const pitchHistory = ref<number[]>([])  // Head pitch history
+const turnHistory = ref<number[]>([])   // Head turn history
+
+// =============================================================================
+// PHOTO CAPTURE FUNCTIONS
+// =============================================================================
+
+
+const takePhoto = () => {
+  const v = previewVideo.value || video.value
+  if (!v) return
+  
+  const canvas = document.createElement('canvas')
+  canvas.width = v.videoWidth
+  canvas.height = v.videoHeight
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  
+  ctx.drawImage(v, 0, 0)
+  capturedPhoto.value = canvas.toDataURL('image/jpeg', 0.8)
+}
+
+const retakePhoto = () => {
+  capturedPhoto.value = null
+  text.value = ''
+  setTimeout(attachPreviewStream, 0)
+}
+
+// Helper to attach stream to preview video
+function attachPreviewStream() {
+  if (previewVideo.value && video.value && video.value.srcObject) {
+    previewVideo.value.srcObject = video.value.srcObject
+  }
+}
+
+// =============================================================================
+// FACE VERIFICATION
+// =============================================================================
+
+const confirmVerification = async () => {
+  if (!capturedPhoto.value || !examId.value) return
+  
+  isVerifying.value = true
+  try {
+    // Extract raw base64 string (remove data:image/jpeg;base64, prefix)
+    const base64Photo = capturedPhoto.value.split(',')[1]
+    
+    const payload = {
+      type: "exam",
+      exam_id: examId.value,
+      photo: base64Photo
+    }
+    
+    console.log('Sending face verification...', { exam_id: examId.value })
+    const res = await fetch(`${API_BASE_URL}/v1/faceId`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    })
+    
+    const data = await res.json().catch(() => ({}))
+    
+    // Check nested response structure: { data: { result: true } }
+    if (res.ok && data?.data?.result === true) {
+      isFaceVerified.value = true
+      text.value = ''
+      console.log('Face verification successful')
+      startMonitoring()
+    } else {
+      console.error('Face verification failed:', res.status, data)
+      text.value = 'Face ID tasdiqlanmadi. Qayta urinib ko\'ring.'
+      isVerifying.value = false
+    }
+  } catch (e) {
+    console.error('Face verification exception:', e)
+    text.value = 'Xatolik yuz berdi.'
+    isVerifying.value = false
+  }
+}
+
+function startMonitoring() {
+  setupMicrophone()
+  setupEnhancedMonitoring()
+}
+
+// =============================================================================
+// API & ERROR HANDLING
+// =============================================================================
+async function fetchErrorList() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/v1/exam/errors/list`)
+    if (res.ok) {
+      const data = await res.json()
+      console.log('Error list fetched:', data)
+      if (Array.isArray(data)) {
+        errorList.value = data
+      } else if (data && Array.isArray(data.data)) {
+        errorList.value = data.data
+      }
+    } else {
+      console.error('Failed to fetch error list:', res.status)
+    }
+  } catch (e) {
+    console.error('Exception fetching error list:', e)
+  }
+}
+
+async function sendError(errorId: number) {
+  if (!examId.value) return
+
+  // Rate limiting check
+  const now = Date.now()
+  const lastTime = lastReportedAt.value[errorId] || 0
+  if (now - lastTime < RATE_LIMIT_MS) {
+    console.log(`Error ${errorId} suppressed (rate limit)`)
+    return
+  }
+  lastReportedAt.value[errorId] = now
+
+  try {
+    // Adding to session array first
+    const errorEntry = {
+      exam_id: examId.value,
+      err_id: errorId,
+      timestamp: new Date().toISOString()
+    }
+    sessionErrors.value.push(errorEntry)
+    console.log('Violation detected & added to session:', errorEntry)
+    console.log('All Session Errors:', sessionErrors.value)
+
+    // Sending to backend
+    const url = `${API_BASE_URL}/v1/exam/error?exam_id=${examId.value}&err_id=${errorId}`
+    console.log(`Sending error to API: ${url}`)
+    const res = await fetch(url, { method: 'PUT' })
+    if (!res.ok) {
+      console.error('Failed to report error to API:', res.status)
+    } else {
+      console.log('Error reported successfully')
+    }
+  } catch (e) {
+    console.error('Exception reporting error:', e)
+  }
+}
 
 // Unified violation reporter
-function reportViolation(message: string) {
+function reportViolation(message: string, errorId: number) {
+  // Gate: Do not report violations until face is verified
+  if (!isFaceVerified.value) return
+
   violationCount.value++
   isInside.value = false
   text.value = `${message} (${violationCount.value}-chi marta)`
+
+  if (errorId) {
+    sendError(errorId)
+  }
 }
+
+// =============================================================================
+// EYE ASPECT RATIO (EAR) CALCULATION
+// =============================================================================
+
+/**
+ * Calculates Eye Aspect Ratio for blink detection.
+ * Reference: Soukupová and Čech
+ */
 function getEAR(eye: faceapi.Point[]) {
   // Guard: 68-landmarks eye arrays have 6 points. If fewer, return neutral EAR.
   if (!eye || eye.length < 6) return 1
@@ -87,7 +333,9 @@ function getEAR(eye: faceapi.Point[]) {
   return (p2p6 + p3p5) / (2.0 * p1p4)
 }
 
-// Microphone setup and audio monitoring
+// =============================================================================
+// MICROPHONE SETUP & AUDIO MONITORING
+// =============================================================================
 async function setupMicrophone() {
   try {
     // Request microphone permission
@@ -121,7 +369,10 @@ async function setupMicrophone() {
   } catch (error) {
     console.error('Microphone access denied:', error)
     isMicrophoneActive.value = false
-    text.value = "Mikrofon ruxsati berilmadi!"
+    // Only show error if monitoring started
+    if (isFaceVerified.value) {
+      text.value = "Mikrofon ruxsati berilmadi!"
+    }
   }
 }
 
@@ -190,7 +441,7 @@ function startAudioMonitoring() {
     // Violation only if speaking is sustained and cooldown passed
     const now = Date.now()
     if (isSpeaking.value && now - lastMicViolationAt > 5000) {
-      reportViolation('Mikrofon: gaplashish aniqlandi')
+      reportViolation('Mikrofon: gaplashish aniqlandi', 11)
       lastMicViolationAt = now
     }
 
@@ -200,6 +451,14 @@ function startAudioMonitoring() {
   checkAudioLevel()
 }
 
+// =============================================================================
+// FACE-API INITIALIZATION & DETECTION LOOP
+// =============================================================================
+
+/**
+ * Initializes face-api models and camera stream.
+ * Sets up the main face detection loop.
+ */
 async function install() {
   await faceapi.nets.tinyFaceDetector.loadFromUri('/models')
   await faceapi.nets.faceLandmark68Net.loadFromUri('/models')
@@ -218,16 +477,17 @@ async function install() {
     }
   })
 
+
   // Setup microphone monitoring
-  await setupMicrophone()
+  // await setupMicrophone() // Moved to startMonitoring()
+  
   if (video.value) {
     video.value.srcObject = stream
     video.value.addEventListener('play', () => {
       if (!video.value) return
-      // start auto photo uploads every 30s
-      if (!photoInterval) {
-        photoInterval = window.setInterval(() => { void takeAndUploadPhoto() }, 30000)
-      }
+      
+      // Attach to preview video if it exists (modal is open)
+      attachPreviewStream()
 
       const canvas = faceapi.createCanvasFromMedia(video.value)
       const context = canvas.getContext('2d')
@@ -249,8 +509,38 @@ async function install() {
 
     faceapi.matchDimensions(canvas, displaySize)
 
+    // Violation persistence state
+    let violationStartTime = 0
+    let currentViolationId: number | null = null
+
+    // Handler to manage persistence
+    const handleViolationCandidate = (message: string, errorId: number) => {
+      // Check persistence
+      if (currentViolationId === errorId) {
+        if (violationStartTime > 0 && Date.now() - violationStartTime > 3000) {
+           // Persistence threshold reached: Report (which updates UI)
+           reportViolation(message, errorId)
+        }
+      } else {
+        // New violation type started
+        currentViolationId = errorId
+        violationStartTime = Date.now()
+        // Do not update UI yet - wait for persistence
+      }
+    }
+
+    const resetViolationState = () => {
+      currentViolationId = null
+      violationStartTime = 0
+      isInside.value = true
+      text.value = ""
+    }
+
     setInterval(async () => {
       if (!video.value || !context) return
+
+      // Gate: Do not detection until face is verified
+      if (!isFaceVerified.value) return
 
       const detections = await faceapi.detectAllFaces(video.value, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks()
       const resized = faceapi.resizeResults(detections, displaySize)
@@ -283,24 +573,21 @@ async function install() {
         const distanceFromCamera = calculateDistanceFromSize(faceArea)
 
         if (distanceFromCamera < 300) {  // 30cm - juda yaqin
-          text.value = "Kameradan uzoqlashing (juda yaqin)"
-          isInside.value = false
+          handleViolationCandidate("Kameradan uzoqlashing (juda yaqin)", 13)
         }
         else if (distanceFromCamera > 800) {  // 80cm - juda uzoq
-          text.value = "Kameraga yaqinlashing (juda uzoq)"
-          isInside.value = false
+          handleViolationCandidate("Kameraga yaqinlashing (juda uzoq)", 14)
         }
         else {
-          isInside.value = distance < r
-          text.value = ""
+          // Check circular boundary
+          // isInside.value = distance < r // Managed by resetViolationState or handleViolationCandidate
+          
           if (detections[0]) {
             const landmarks = detections[0].landmarks
 
-            // Check liveness first
+             // Check liveness first
             const isAlive = checkLiveness()
-            if (!isAlive) {
-              return // Skip other checks if liveness fails
-            }
+            if (!isAlive) return
 
             const leftEye = landmarks.getLeftEye()
             const rightEye = landmarks.getRightEye()
@@ -335,16 +622,12 @@ async function install() {
             const facingStraight = Math.abs(smoothedTurn) < HEAD_TURN_THRESHOLD
 
             if (smoothedPitch > 15) {  // Adjusted thresholds for better sensitivity
-              isInside.value = false
-              text.value = "Kameraga to'g'ri qarang (Tepaga buring)"
+              handleViolationCandidate("Kameraga to'g'ri qarang (Tepaga buring)", 15)
             }
             else if (smoothedPitch < -15) {  // Negative values for looking down
-              isInside.value = false
-              text.value = "Kameraga to'g'ri qarang (Pastga buring)"
+              handleViolationCandidate("Kameraga to'g'ri qarang (Pastga buring)", 16)
             }
             else if (facingStraight) {
-              isInside.value = true
-              text.value = ""
               const leftEAR = getEAR(leftEye)
               const rightEAR = getEAR(rightEye)
               const avgEAR = (leftEAR + rightEAR) / 2
@@ -361,40 +644,45 @@ async function install() {
               const consistentBlink = earDifference < 0.05  // Eyes should blink together
 
               if (isBlinking && consistentBlink) {
-                isInside.value = false
+                // Eyes closed detection
+                handleViolationCandidate("Ko'zlarni oching", 19)
                 realUser.value = true
-                text.value = "Ko'zlarni oching"
               }
               else if (!consistentBlink && isBlinking) {
-                // One eye might be partially closed, but not both
-                text.value = "Ko'zlarni to'liq oching"
-                isInside.value = false
+                // Partial blink / one eye
+                handleViolationCandidate("Ko'zlarni to'liq oching", 20)
               }
               else {
-                isInside.value = true
-                text.value = ""
+                // All good
+                resetViolationState()
               }
             }
             else {
-              isInside.value = false
+              // Turning left/right
               if (smoothedTurn > 0) {
-                text.value = "Kameraga to'g'ri qarang (O'nga buriling)"
+                handleViolationCandidate("Kameraga to'g'ri qarang (O'nga buriling)", 17)
               }
               else {
-                text.value = "Kameraga to'g'ri qarang (Chapga buriling)"
+                handleViolationCandidate("Kameraga to'g'ri qarang (Chapga buriling)", 18)
               }
             }
           }
         }
       } else {
-        isInside.value = false
-        text.value = "Yuz aniqlanmadi...!"
+        handleViolationCandidate("Yuz aniqlanmadi...!", 12)
       }
     }, 200)
   })
   }
 }
 
+// =============================================================================
+// HEAD POSE ESTIMATION
+// =============================================================================
+
+/**
+ * Estimates head pitch angle from facial landmarks.
+ */
 function estimatePitch(landmarks: faceapi.FaceLandmarks68) {
   const nose = landmarks.getNose()
   const jaw = landmarks.getJawOutline()
@@ -439,7 +727,13 @@ function estimatePitch(landmarks: faceapi.FaceLandmarks68) {
   return finalPitch
 }
 
-// Smoothing function for values
+// =============================================================================
+// UTILITY FUNCTIONS
+// =============================================================================
+
+/**
+ * Applies weighted smoothing to reduce jitter in detection values.
+ */
 function smoothValue(history: number[], newValue: number, maxLength: number = HISTORY_LENGTH): number {
   history.push(newValue)
   if (history.length > maxLength) {
@@ -473,29 +767,42 @@ function calculateDistanceFromSize(faceArea: number) {
   return distance
 }
 
-// Event handlers for monitoring violations
+// =============================================================================
+// MONITORING EVENT HANDLERS
+// =============================================================================
 const handleFullscreenExit = () => {
   isFullscreenMode.value = false
-  reportViolation("Fullscreen'dan chiqdingiz")
+  reportViolation("Fullscreen'dan chiqdingiz", 1)
   console.log('Fullscreen exited - violation detected')
 }
 
 const handleTabSwitch = () => {
-  reportViolation("Boshqa tab'ga o'tdingiz")
+  reportViolation("Boshqa tab'ga o'tdingiz", 2)
   console.log('Tab switch detected - violation')
 }
 
 const handleAppSwitch = () => {
-  reportViolation("Boshqa ilovaga o'tdingiz")
+  reportViolation("Boshqa ilovaga o'tdingiz", 3)
   console.log('App switch detected - violation')
 }
 
 const handlePageLeave = () => {
-  reportViolation('Sahifani tark etishga harakat qildingiz')
+  reportViolation('Sahifani tark etishga harakat qildingiz', 4)
   console.log('Page leave attempt detected - violation')
 }
 
-// Enhanced monitoring for page visibility and focus
+// =============================================================================
+// ENHANCED MONITORING SETUP
+// =============================================================================
+
+/**
+ * Sets up event listeners for various proctoring violations:
+ * - Visibility changes (tab switching)
+ * - Focus changes (app switching)
+ * - Fullscreen changes
+ * - Page navigation attempts
+ * - Keyboard shortcuts
+ */
 const setupEnhancedMonitoring = () => {
   // Monitor page visibility changes
   document.addEventListener('visibilitychange', () => {
@@ -543,12 +850,24 @@ const setupEnhancedMonitoring = () => {
       if (event.ctrlKey || event.metaKey) {
         switch (event.key) {
           case 't': // Ctrl+T (new tab)
+            event.preventDefault()
+            reportViolation('Taqiqlangan tugma kombinatsiyasi', 5)
+            break
           case 'w': // Ctrl+W (close tab)
+            event.preventDefault()
+            reportViolation('Taqiqlangan tugma kombinatsiyasi', 6)
+            break
           case 'r': // Ctrl+R (refresh)
+            event.preventDefault()
+            reportViolation('Taqiqlangan tugma kombinatsiyasi', 7)
+            break
           case 'n': // Ctrl+N (new window)
+            event.preventDefault()
+            reportViolation('Taqiqlangan tugma kombinatsiyasi', 8)
+            break
           case 'l': // Ctrl+L (address bar)
             event.preventDefault()
-            reportViolation('Taqiqlangan tugma kombinatsiyasi')
+            reportViolation('Taqiqlangan tugma kombinatsiyasi', 9)
             break
           case 'Tab': // Alt+Tab (app switching)
             if (event.altKey) {
@@ -562,183 +881,26 @@ const setupEnhancedMonitoring = () => {
       // Block F11 (fullscreen toggle)
       if (event.key === 'F11') {
         event.preventDefault()
-        reportViolation('Fullscreen tugmasini ishlatish taqiqlangan')
+        reportViolation('Fullscreen tugmasini ishlatish taqiqlangan', 10)
       }
     }
   })
 }
+
+// =============================================================================
+// LIFECYCLE
+// =============================================================================
 
 onMounted(() => {
   install()
   setupEnhancedMonitoring()
-  // Clear auto-photo on unload
-  window.addEventListener('beforeunload', () => {
-    if (photoInterval) {
-      clearInterval(photoInterval)
-      photoInterval = null
-    }
-  })
+  fetchErrorList()
 })
-
-// Capture a still photo from the video and upload to the same API endpoint
-async function takeAndUploadPhoto() {
-  try {
-    if (!video.value) return
-    const v = video.value
-    const canvas = document.createElement('canvas')
-    // Use current video dimensions
-    const w = v.videoWidth || 640
-    const h = v.videoHeight || 480
-    canvas.width = w
-    canvas.height = h
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    ctx.drawImage(v, 0, 0, w, h)
-    // Encode as JPEG to keep size small
-    const blob: Blob | null = await new Promise(resolve => canvas.toBlob(b => resolve(b), 'image/jpeg', 0.8))
-    if (!blob) return
-    // Enforce a size cap (use ~2MB)
-    if (blob.size > 2 * 1024 * 1024) {
-      text.value = 'Rasm juda katta. Iltimos qayta urinib ko\'ring.'
-      return
-    }
-    const filename = `photo-${Date.now()}.jpg`
-    const formData = new FormData()
-    formData.append('file', blob, filename)
-    console.log('Uploading photo to /public/files/upload/category/exam/video ...')
-    const response = await fetch('https://proctor.platon.uz/services/platon-core/web/v1/public/files/upload/category/exam_video', {
-      method: 'POST',
-      body: formData
-    })
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '')
-      console.error('Photo upload failed', { status: response.status, errText })
-      text.value = `Rasm yuklash xatosi: ${response.status}`
-      return
-    }
-    const data: unknown = await response.json().catch(() => ({}))
-    console.log('Photo upload success', { response: data })
-    text.value = 'Rasm muvaffaqiyatli yuklandi.'
-  } catch (err) {
-    console.error('Photo upload exception', err)
-    text.value = 'Rasm yuklashda xatolik yuz berdi.'
-  }
-}
-
-// Handle screen recording stream from modal
-function handleScreenRecordingStarted(stream: MediaStream) {
-  screenStream.value = stream
-  // Auto-start recording after navigation into page
-  try {
-    recordedChunks = []
-    // Target total bitrate ~400-500 kbps, fps ~12, resolution ~640x360
-    const options: MediaRecorderOptions = {
-      videoBitsPerSecond: 450_000,
-      audioBitsPerSecond: 48_000
-    }
-
-    // Downscale and lower frame rate on the track if supported
-    const vTrack = stream.getVideoTracks()[0]
-    try {
-      if (vTrack) {
-        void vTrack.applyConstraints({
-          width: { ideal: 640, max: 640 },
-          height: { ideal: 360, max: 360 },
-          frameRate: 12
-        })
-      }
-    } catch {}
-
-    const tryTypes = [
-      'video/mp4;codecs=h264',
-      'video/webm;codecs=vp9',
-      'video/webm;codecs=vp8',
-      'video/webm'
-    ]
-    type MediaRecorderCtor = typeof MediaRecorder & { isTypeSupported?: (type: string) => boolean }
-    const MRctor = MediaRecorder as MediaRecorderCtor
-    const isSupported = typeof MRctor.isTypeSupported === 'function'
-    if (isSupported && MRctor.isTypeSupported) {
-      const supportedType = tryTypes.find(t => MRctor.isTypeSupported && MRctor.isTypeSupported(t))
-      mediaRecorder = supportedType ? new MediaRecorder(stream, { ...options, mimeType: supportedType }) : new MediaRecorder(stream, options)
-    } else {
-      mediaRecorder = new MediaRecorder(stream, options)
-    }
-  } catch {
-    // Fallback mimeType
-    mediaRecorder = new MediaRecorder(stream)
-  }
-  if (!mediaRecorder) return
-  mediaRecorder.ondataavailable = (e: BlobEvent) => {
-    if (e.data && e.data.size > 0) recordedChunks.push(e.data)
-  }
-  mediaRecorder.onstop = () => {
-    // Build final blob from accumulated chunks
-    const blob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' })
-    // Clear chunks buffer now that blob is created
-    recordedChunks = []
-    // Trigger upload
-    uploadRecordedVideo(blob)
-    isRecording.value = false
-  }
-  mediaRecorder.start(1000)
-  isRecording.value = true
-  // Stop when user stops sharing
-  stream.getVideoTracks()[0]?.addEventListener('ended', () => {
-    stopScreenRecording()
-  })
-  // Also stop on unload
-  window.addEventListener('beforeunload', stopScreenRecording)
-}
-
-function stopScreenRecording() {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    console.log('Stopping recording and finalizing blob...')
-    mediaRecorder.stop()
-  }
-  screenStream.value?.getTracks().forEach(t => t.stop())
-  screenStream.value = null
-
-  window.removeEventListener('beforeunload', stopScreenRecording)
-}
-
-async function uploadRecordedVideo(blob: Blob) {
-  try {
-    console.log('Uploading video started', { sizeBytes: blob.size })
-    if (blob.size > MAX_UPLOAD_BYTES) {
-      text.value = 'Video hajmi 256MB dan katta. Qisqartiring.'
-      console.warn('Upload aborted: file too large for limit', { limitBytes: MAX_UPLOAD_BYTES })
-      return
-    }
-
-    const filename = `screen-recording-${Date.now()}.webm`
-    const formData = new FormData()
-    formData.append('file', blob, filename)
-
-    const response = await fetch('https://proctor.platon.uz/services/platon-core/web/v1/public/files/upload/category/exam_video', {
-      method: 'post',
-      body: formData
-    })
-
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '')
-      text.value = `Video yuklash xatosi: ${response.status} ${errText}`
-      console.error('Upload failed', { status: response.status, errText })
-      return
-    }
-
-    const data: unknown = await response.json().catch(() => ({}))
-
-    text.value = 'Ekran yozuvi muvaffaqiyatli yuklandi.'
-    console.log('Upload success', { response: data })
-  } catch (err) {
-    console.error('Upload failed (exception)', err)
-    text.value = 'Video yuklashda xatolik yuz berdi.'
-  }
-}
 </script>
 
 <style scoped>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 .container {
   width: 100vw;
   height: 100vh;
@@ -765,6 +927,9 @@ async function uploadRecordedVideo(blob: Blob) {
   position: absolute;
   top: 0;
   left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 .inside {
@@ -781,19 +946,158 @@ async function uploadRecordedVideo(blob: Blob) {
   text-align: center;
 }
 
-.stop-btn {
-  margin-top: 12px;
+.verification-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
   width: 100%;
-  padding: 10px 14px;
-  background-color: #dc3545;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 600;
+  height: 100%;
+  background-color: rgba(15, 23, 42, 0.6); /* Slate 900 with opacity */
+  backdrop-filter: blur(8px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 999;
 }
 
-.stop-btn:hover {
-  background-color: #b02a37;
+.verification-box {
+  background: white;
+  padding: 2.5rem;
+  border-radius: 32px;
+  text-align: center;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  animation: modal-pop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modal-pop {
+  0% { transform: scale(0.95); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.verification-box h2 {
+  margin-bottom: 0.75rem;
+  color: #1e293b; /* Slate 800 */
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.verification-box p {
+  margin-bottom: 1.5rem;
+  color: #64748b; /* Slate 500 */
+  line-height: 1.5;
+}
+
+.verify-btn {
+  background-color: #2563eb; /* Blue 600 */
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 16px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  width: 100%;
+  box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);
+}
+
+.verify-btn:hover:not(:disabled) {
+  background-color: #1d4ed8; /* Blue 700 */
+  transform: translateY(-1px);
+  box-shadow: 0 6px 8px -1px rgba(37, 99, 235, 0.3);
+}
+
+.verify-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.verify-btn:disabled {
+  background-color: #94a3b8; /* Slate 400 */
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.captured-preview {
+  width: 100%;
+  max-width: 320px;
+  border-radius: 24px;
+  margin-bottom: 20px;
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+  /* Transformation to mirror the image if the video is mirrored */
+  transform: scaleX(-1);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.buttons-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.verify-btn.secondary {
+  background-color: #f1f5f9; /* Slate 100 */
+  color: #334155; /* Slate 700 */
+  box-shadow: none;
+}
+
+.verify-btn.secondary:hover {
+  background-color: #e2e8f0; /* Slate 200 */
+  color: #1e293b; /* Slate 800 */
+}
+
+.live-preview-container {
+  width: 100%;
+  max-width: 320px;
+  height: 240px;
+  background: #0f172a; /* Slate 900 */
+  margin: 0 auto 20px;
+  border-radius: 24px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.live-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1); /* Mirror effect */
+}
+
+/* Mobile Optimizations */
+@media (max-width: 768px) {
+  .camera-container {
+    width: 280px;
+    height: 280px;
+  }
+  
+  .verification-box {
+    padding: 1.5rem;
+    width: 95%;
+    max-width: 360px;
+    margin: 0 auto;
+  }
+  
+  .verification-box h2 {
+    font-size: 1.25rem;
+  }
+  
+  .live-preview-container {
+    height: 200px;
+  }
+  
+  .captured-preview {
+    max-height: 200px;
+    width: auto;
+  }
+  
+  .verify-btn {
+    padding: 10px 20px;
+    font-size: 14px;
+  }
 }
 </style>

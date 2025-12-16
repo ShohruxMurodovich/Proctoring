@@ -37,20 +37,13 @@
       </div>
 
       <button
-        @click="requestAllPermissions"
-        class="permission-btn"
+        @click="handleButtonClick"
+        class="fullscreen-btn"
         :disabled="isRequesting"
       >
-        {{ isRequesting ? 'Barcha ruxsatlar so\'ralmoqda...' : 'BARCHA RUXSATLARNI BERISH' }}
-      </button>
-
-      <button
-        @click="enterFullscreen"
-        class="fullscreen-btn"
-        :disabled="!cameraPermission || !microphonePermission || !screenPermission"
-        v-if="cameraPermission && microphonePermission && screenPermission"
-      >
-        Imtixonni Boshlash
+        <span v-if="isRequesting">Barcha ruxsatlar so'ralmoqda...</span>
+        <span v-else-if="allPermissionsGranted">Imtixonni Boshlash</span>
+        <span v-else>BARCHA RUXSATLARNI BERISH</span>
       </button>
 
       <div v-if="errorMessage" class="error-message">
@@ -61,7 +54,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 
 const showModal = ref(true)
 
@@ -83,6 +76,18 @@ const microphonePermission = ref(false)
 const screenPermission = ref(false)
 const isRequesting = ref(false)
 const errorMessage = ref('')
+
+const allPermissionsGranted = computed(() => {
+  return cameraPermission.value && microphonePermission.value && screenPermission.value
+})
+
+const handleButtonClick = () => {
+  if (allPermissionsGranted.value) {
+    enterFullscreen()
+  } else {
+    requestAllPermissions()
+  }
+}
 
 
 const enterFullscreen = async () => {
@@ -249,104 +254,135 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 .modal-overlay {
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  background-color: rgba(0, 0, 0, 0.8);
+  background-color: rgba(15, 23, 42, 0.6); /* Slate 900 with opacity */
+  backdrop-filter: blur(8px);
   display: flex;
   justify-content: center;
   align-items: center;
   z-index: 1000;
+  font-family: 'Inter', sans-serif;
 }
 
 .modal-content {
   background: white;
-  padding: 2rem;
-  border-radius: 10px;
+  padding: 2.5rem;
+  border-radius: 32px;
   text-align: center;
-  max-width: 400px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  max-width: 440px;
+  width: 90%;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  animation: modal-pop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modal-pop {
+  0% { transform: scale(0.95); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
 }
 
 .modal-content h2 {
-  margin-bottom: 1rem;
-  color: #333;
+  margin-bottom: 0.75rem;
+  color: #1e293b; /* Slate 800 */
+  font-size: 1.5rem;
+  font-weight: 700;
 }
 
 .modal-content p {
-  margin-bottom: 2rem;
-  color: #666;
+  margin-bottom: 1.5rem;
+  color: #64748b; /* Slate 500 */
+  line-height: 1.5;
 }
 
 .fullscreen-btn {
-  background-color: #007bff;
+  background-color: #2563eb; /* Blue 600 */
   color: white;
   border: none;
   padding: 12px 24px;
-  border-radius: 5px;
+  border-radius: 16px;
   cursor: pointer;
   font-size: 16px;
-  transition: background-color 0.3s;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  width: 100%;
+  box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);
 }
 
 .fullscreen-btn:hover {
-  background-color: #0056b3;
+  background-color: #1d4ed8; /* Blue 700 */
+  transform: translateY(-1px);
+  box-shadow: 0 6px 8px -1px rgba(37, 99, 235, 0.3);
+}
+
+.fullscreen-btn:active {
+  transform: translateY(0);
 }
 
 .warning-text {
-  background-color: #fff3cd;
-  border: 1px solid #ffeaa7;
-  border-radius: 5px;
-  padding: 10px;
-  margin: 1rem 0;
+  background-color: #fffbeb; /* Amber 50 */
+  border: 1px solid #fcd34d; /* Amber 300 */
+  border-radius: 16px;
+  padding: 16px;
+  margin: 1.5rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .warning-text p {
-  margin: 5px 0;
-  color: #856404;
+  margin: 0;
+  color: #b45309; /* Amber 700 */
   font-size: 14px;
   font-weight: 500;
+  text-align: left;
+  line-height: 1.4;
 }
 
 .permission-status {
   margin: 1.5rem 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .permission-item {
   display: flex;
   align-items: center;
-  padding: 10px;
-  border-radius: 8px;
-  border: 2px solid #ddd;
+  padding: 12px 16px;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0; /* Slate 200 */
   transition: all 0.3s ease;
+  background-color: #f8fafc; /* Slate 50 */
 }
 
 .permission-item.granted {
-  background-color: #d4edda;
-  border-color: #28a745;
-  color: #155724;
+  background-color: #ecfdf5; /* Emerald 50 */
+  border-color: #34d399; /* Emerald 400 */
+  color: #065f46; /* Emerald 800 */
 }
 
 .permission-item.denied {
-  background-color: #f8d7da;
-  border-color: #dc3545;
-  color: #721c24;
+  background-color: #fef2f2; /* Red 50 */
+  border-color: #f87171; /* Red 400 */
+  color: #991b1b; /* Red 800 */
 }
 
 .permission-icon {
   font-size: 20px;
-  margin-right: 10px;
+  margin-right: 12px;
 }
 
 .permission-text {
   flex: 1;
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 14px;
+  text-align: left;
 }
 
 .status-indicator {
@@ -355,38 +391,87 @@ onUnmounted(() => {
 }
 
 .permission-btn {
-  background-color: #17a2b8;
+  background-color: #0ea5e9; /* Sky 500 */
   color: white;
   border: none;
   padding: 12px 24px;
-  border-radius: 5px;
+  border-radius: 16px;
   cursor: pointer;
   font-size: 16px;
-  transition: background-color 0.3s;
-  margin-bottom: 10px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  margin-bottom: 12px;
   width: 100%;
+  box-shadow: 0 4px 6px -1px rgba(14, 165, 233, 0.2);
 }
 
 .permission-btn:hover:not(:disabled) {
-  background-color: #138496;
+  background-color: #0284c7; /* Sky 600 */
+  transform: translateY(-1px);
 }
 
 .permission-btn:disabled {
-  background-color: #6c757d;
+  background-color: #94a3b8; /* Slate 400 */
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .error-message {
-  background-color: #f8d7da;
-  border: 1px solid #f5c6cb;
-  border-radius: 5px;
-  padding: 10px;
-  margin-top: 10px;
+  background-color: #fee2e2; /* Red 100 */
+  border: 1px solid #fca5a5; /* Red 300 */
+  border-radius: 16px;
+  padding: 12px;
+  margin-top: 16px;
 }
 
 .error-message p {
   margin: 0;
-  color: #721c24;
+  color: #b91c1c; /* Red 700 */
   font-size: 14px;
+  font-weight: 500;
+}
+
+/* Mobile Optimizations */
+@media (max-width: 768px) {
+  .modal-content {
+    padding: 1.5rem;
+    width: 95%;
+    max-width: 360px;
+    border-radius: 24px;
+  }
+  
+  .modal-content h2 {
+    font-size: 1.25rem;
+  }
+  
+  .permission-status {
+    gap: 8px;
+  }
+  
+  .permission-item {
+    padding: 10px 12px;
+  }
+  
+  .permission-text {
+    font-size: 13px;
+  }
+  
+  .permission-icon {
+    font-size: 18px;
+    margin-right: 8px;
+  }
+  
+  .fullscreen-btn {
+    padding: 12px 16px;
+    font-size: 14px;
+  }
+  
+  .warning-text {
+    padding: 12px;
+  }
+  
+  .warning-text p {
+    font-size: 13px;
+  }
 }
 </style>
