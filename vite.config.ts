@@ -24,4 +24,10 @@ export default defineConfig({
     },
   },
   base: './',
+  server: {
+    allowedHosts: ['exam.kasbiy-talim.uz']
+  },
+  preview: {
+    allowedHosts: ['exam.kasbiy-talim.uz']
+  }
 })
