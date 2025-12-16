@@ -78,6 +78,13 @@ interface ExamError {
   long01: string
 }
 
+/** Structure of session error entries for tracking */
+interface SessionError {
+  exam_id: string
+  err_id: number
+  timestamp: string
+}
+
 // =============================================================================
 // CONFIGURATION CONSTANTS
 // =============================================================================
@@ -98,7 +105,7 @@ const examId = ref(route.query.exam_id as string || '')
 // =============================================================================
 
 const errorList = ref<ExamError[]>([])
-const sessionErrors = ref<any[]>([])
+const sessionErrors = ref<SessionError[]>([])
 const lastReportedAt = ref<Record<number, number>>({})  // Rate limiting map
 const violationCount = ref<number>(0)
 
@@ -561,13 +568,7 @@ async function install() {
 
       // Agar yuz aniqlangan bo‘lsa
       if (resized.length > 0) {
-        const { x, y, width, height } = resized[0].detection.box
-        const centerX = x + width / 2
-        const centerY = y + height / 2
-
-        const dx = centerX - cx
-        const dy = centerY - cy
-        const distance = Math.sqrt(dx * dx + dy * dy)
+        const { width, height } = resized[0].detection.box
 
         const faceArea = width * height
         const distanceFromCamera = calculateDistanceFromSize(faceArea)
@@ -579,8 +580,6 @@ async function install() {
           handleViolationCandidate("Kameraga yaqinlashing (juda uzoq)", 14)
         }
         else {
-          // Check circular boundary
-          // isInside.value = distance < r // Managed by resetViolationState or handleViolationCandidate
           
           if (detections[0]) {
             const landmarks = detections[0].landmarks
