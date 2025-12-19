@@ -4,7 +4,6 @@
       <h2>Imtixonni Boshlash</h2>
       <p>Imtixonni boshlash uchun kamera va mikrofon ruxsatlarini bering</p>
 
-      <!-- Permission Status Indicators -->
       <div class="permission-status">
         <div class="permission-item" :class="{ 'granted': cameraPermission, 'denied': !cameraPermission }">
           <span class="permission-icon">📹</span>
@@ -65,6 +64,8 @@ const emit = defineEmits<{
   appSwitch: []
   pageLeave: []
   screenRecordingStarted: [MediaStream]
+  started: []
+  fullscreenRestored: [] // Added event
 }>()
 
 // Track if user has entered fullscreen at least once
@@ -106,6 +107,7 @@ const enterFullscreen = async () => {
     }
     hasEnteredFullscreen.value = true
     showModal.value = false
+    emit('started')
   } catch (error) {
     console.error('Fullscreen request failed:', error)
     errorMessage.value = 'Fullscreen rejimiga o\'tishda xatolik yuz berdi. Iltimos, qayta urinib ko\'ring.'
@@ -163,16 +165,14 @@ const requestAllPermissions = async () => {
 
 // Monitor fullscreen changes
 const handleFullscreenChange = () => {
-  const isFullscreen = !!(
-    document.fullscreenElement ||
-    (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement ||
-    (document as Document & { msFullscreenElement?: Element }).msFullscreenElement
-  )
+  const isFullscreen = document.fullscreenElement !== null
+  if (isFullscreen && hasEnteredFullscreen.value) {
+    emit('fullscreenRestored')
+  }
 
   if (!isFullscreen && hasEnteredFullscreen.value && !showModal.value) {
     // User exited fullscreen after entering it
-    console.log('User exited fullscreen')
-    showModal.value = true
+    // Don't show modal blocking the test, just emit event for violation
     emit('fullscreenExit')
   }
 }
@@ -180,7 +180,7 @@ const handleFullscreenChange = () => {
 // Monitor visibility changes (tab switching, minimizing)
 const handleVisibilityChange = () => {
   if (document.hidden && hasEnteredFullscreen.value) {
-    console.log('User switched to another tab or minimized the window')
+
     emit('tabSwitch')
   }
 }
@@ -198,7 +198,7 @@ const handleFocusChange = () => {
     // Add a small delay to prevent false positives from quick focus changes
     focusTimeout = setTimeout(() => {
       if (!document.hasFocus() && hasEnteredFullscreen.value) {
-        console.log('User switched to another application')
+
         emit('appSwitch')
       }
     }, 500) // 500ms delay to ensure it's a real app switch

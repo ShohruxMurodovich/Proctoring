@@ -15,14 +15,14 @@ import {
     MIC_VIOLATION_COOLDOWN_MS
 } from '@/constants'
 
-// =============================================================================
-// Composable
-// =============================================================================
+
+
+
 
 export function useMicrophone(onSpeakingViolation: () => void) {
-    // -------------------------------------------------------------------------
-    // State
-    // -------------------------------------------------------------------------
+
+
+
 
     const audioStream = ref<MediaStream | null>(null)
     const audioContext = ref<AudioContext | null>(null)
@@ -43,9 +43,9 @@ export function useMicrophone(onSpeakingViolation: () => void) {
     let attackFrames = 0
     let releaseFrames = 0
 
-    // -------------------------------------------------------------------------
-    // Setup
-    // -------------------------------------------------------------------------
+
+
+
 
     /**
      * Initializes microphone access and audio monitoring.
@@ -61,7 +61,7 @@ export function useMicrophone(onSpeakingViolation: () => void) {
             })
 
             // Create audio context
-            audioContext.value = new (window.AudioContext || (window as any).webkitAudioContext)()
+            audioContext.value = new (window.AudioContext || (window as unknown as Window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
             analyser.value = audioContext.value.createAnalyser()
             microphone.value = audioContext.value.createMediaStreamSource(audioStream.value)
             bandpass.value = audioContext.value.createBiquadFilter()
@@ -87,9 +87,9 @@ export function useMicrophone(onSpeakingViolation: () => void) {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Audio Monitoring
-    // -------------------------------------------------------------------------
+
+
+
 
     /**
      * Starts the audio level monitoring loop.
@@ -168,9 +168,9 @@ export function useMicrophone(onSpeakingViolation: () => void) {
         checkAudioLevel()
     }
 
-    // -------------------------------------------------------------------------
-    // Cleanup
-    // -------------------------------------------------------------------------
+
+
+
 
     /**
      * Stops microphone monitoring and releases resources.
@@ -187,12 +187,12 @@ export function useMicrophone(onSpeakingViolation: () => void) {
         isMicrophoneActive.value = false
     }
 
-    // -------------------------------------------------------------------------
-    // Return
-    // -------------------------------------------------------------------------
+
+
+
 
     return {
-        // State
+
         isMicrophoneActive,
         audioLevel,
         isSpeaking,

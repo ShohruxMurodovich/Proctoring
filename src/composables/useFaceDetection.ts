@@ -1,15 +1,6 @@
-/**
- * Face Detection Composable
- * 
- * Handles face detection using face-api.js, including:
- * - Model loading
- * - Camera stream setup
- * - Face landmark detection
- * - Eye/head position analysis
- * - Violation candidate handling with persistence
- */
 
-import { ref } from 'vue'
+
+import { ref, watch } from 'vue'
 import * as faceapi from 'face-api.js'
 import {
     BLINK_THRESHOLD,
@@ -27,26 +18,20 @@ import {
     AUTO_PHOTO_INTERVAL_MS
 } from '@/constants'
 
-// =============================================================================
-// Types
-// =============================================================================
+
 
 export interface ViolationHandler {
     reportViolation: (message: string, errorId: number) => void
     resetViolationState: () => void
 }
 
-// =============================================================================
-// Composable
-// =============================================================================
+
 
 export function useFaceDetection(
     violationHandler: ViolationHandler,
     isFaceVerified: { value: boolean }
 ) {
-    // -------------------------------------------------------------------------
-    // State
-    // -------------------------------------------------------------------------
+
 
     const video = ref<HTMLVideoElement | null>(null)
     const overlay = ref<HTMLCanvasElement | null>(null)
@@ -63,10 +48,6 @@ export function useFaceDetection(
     let violationStartTime = 0
     let currentViolationId: number | null = null
     let photoInterval: number | null = null
-
-    // -------------------------------------------------------------------------
-    // Utilities
-    // -------------------------------------------------------------------------
 
     /**
      * Calculates Eye Aspect Ratio (EAR) for blink detection.
@@ -142,10 +123,6 @@ export function useFaceDetection(
         return REFERENCE_DISTANCE_MM * Math.sqrt(REFERENCE_FACE_AREA / faceArea)
     }
 
-    // -------------------------------------------------------------------------
-    // Violation Handling
-    // -------------------------------------------------------------------------
-
     /**
      * Handles a violation candidate - only reports after persistence threshold.
      */
@@ -169,9 +146,7 @@ export function useFaceDetection(
         violationHandler.resetViolationState()
     }
 
-    // -------------------------------------------------------------------------
     // Photo Capture
-    // -------------------------------------------------------------------------
 
     /**
      * Captures a photo from the video stream.
@@ -204,12 +179,17 @@ export function useFaceDetection(
     function attachPreviewStream(): void {
         if (previewVideo.value && video.value && video.value.srcObject) {
             previewVideo.value.srcObject = video.value.srcObject
+            // Ensure it plays
+            previewVideo.value.play().catch(e => console.error("Preview play failed", e))
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Core Detection
-    // -------------------------------------------------------------------------
+    // Ensure preview connects when element is mounted
+    watch(previewVideo, (el) => {
+        if (el) attachPreviewStream()
+    })
+
+
 
     /**
      * Main detection loop - analyzes face position and triggers violations.
@@ -237,7 +217,7 @@ export function useFaceDetection(
             context.stroke()
 
             if (resized.length > 0) {
-                analyzeDetection(resized[0], circleCenterX, circleCenterY)
+                analyzeDetection(resized[0])
             } else {
                 handleViolationCandidate("Yuz aniqlanmadi...!", 12)
             }
@@ -248,11 +228,9 @@ export function useFaceDetection(
      * Analyzes a single face detection for violations.
      */
     function analyzeDetection(
-        detection: faceapi.WithFaceLandmarks<{ detection: faceapi.FaceDetection }, faceapi.FaceLandmarks68>,
-        circleCenterX: number,
-        circleCenterY: number
+        detection: faceapi.WithFaceLandmarks<{ detection: faceapi.FaceDetection }, faceapi.FaceLandmarks68>
     ): void {
-        const { x, y, width, height } = detection.detection.box
+        const { width, height } = detection.detection.box
         const faceArea = width * height
         const distanceFromCamera = calculateDistanceFromSize(faceArea)
 
@@ -334,9 +312,7 @@ export function useFaceDetection(
         resetViolationTracking()
     }
 
-    // -------------------------------------------------------------------------
     // Initialization
-    // -------------------------------------------------------------------------
 
     /**
      * Loads face-api models and initializes camera.
@@ -361,19 +337,17 @@ export function useFaceDetection(
         if (video.value) {
             video.value.srcObject = stream
             video.value.addEventListener('play', onVideoPlay)
+            // Immediately attach to preview if available
+            attachPreviewStream()
         }
     }
 
-    /**
-     * Handler for video play event - sets up detection loop.
-     */
+
     function onVideoPlay(): void {
         if (!video.value) return
 
-        // Start auto photo uploads
         if (!photoInterval) {
             photoInterval = window.setInterval(() => {
-                // Photo upload logic would go here
             }, AUTO_PHOTO_INTERVAL_MS)
         }
 
@@ -401,19 +375,14 @@ export function useFaceDetection(
         runDetectionLoop(canvas, context, displaySize)
     }
 
-    // -------------------------------------------------------------------------
-    // Return
-    // -------------------------------------------------------------------------
+
 
     return {
-        // Refs (for template binding)
         video,
         overlay,
         previewVideo,
         capturedPhoto,
         realUser,
-
-        // Methods
         initialize,
         takePhoto,
         retakePhoto,

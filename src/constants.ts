@@ -3,15 +3,22 @@
  * All magic numbers and thresholds are defined here for easy adjustment.
  */
 
-// =============================================================================
-// API Configuration
-// =============================================================================
 
+
+
+
+// API Configuration
 export const API_BASE_URL = 'https://kasbiy-talim.uz/services/platon-core/api'
 
-// =============================================================================
-// Timing Constants
-// =============================================================================
+// Scoring Configuration
+/** Initial score for the exam */
+export const INITIAL_SCORE = 100
+/** Score threshold for failing the exam */
+export const MIN_PASSING_SCORE = 50
+
+
+
+
 
 /** Minimum interval between same error reports (ms) */
 export const RATE_LIMIT_MS = 3000
@@ -25,9 +32,9 @@ export const AUTO_PHOTO_INTERVAL_MS = 30000
 /** Face detection interval (ms) */
 export const FACE_DETECTION_INTERVAL_MS = 200
 
-// =============================================================================
-// Face Detection Thresholds
-// =============================================================================
+
+
+
 
 /** Eye Aspect Ratio threshold for blink detection */
 export const BLINK_THRESHOLD = 0.22
@@ -44,9 +51,9 @@ export const PITCH_THRESHOLD = 15
 /** Number of frames to average for smoothing */
 export const SMOOTHING_HISTORY_LENGTH = 5
 
-// =============================================================================
-// Distance Detection
-// =============================================================================
+
+
+
 
 /** Minimum distance from camera (mm) - too close warning */
 export const MIN_CAMERA_DISTANCE_MM = 300
@@ -60,16 +67,16 @@ export const REFERENCE_FACE_AREA = 15000
 /** Reference distance for distance calculation (mm) */
 export const REFERENCE_DISTANCE_MM = 600
 
-// =============================================================================
-// UI Configuration
-// =============================================================================
+
+
+
 
 /** Radius of the circular face boundary on screen */
 export const CIRCLE_BOUNDARY_RADIUS = 148
 
-// =============================================================================
-// Audio Monitoring
-// =============================================================================
+
+
+
 
 /** Number of frames for audio calibration */
 export const AUDIO_CALIBRATION_FRAMES = 90
@@ -89,9 +96,9 @@ export const RELEASE_FRAME_COUNT = 15
 /** Cooldown between microphone violations (ms) */
 export const MIC_VIOLATION_COOLDOWN_MS = 5000
 
-// =============================================================================
-// File Limits
-// =============================================================================
+
+
+
 
 /** Maximum upload size for recordings (bytes) */
 export const MAX_UPLOAD_BYTES = 256 * 1024 * 1024 // 256MB

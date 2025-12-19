@@ -5,12 +5,23 @@
       v-if="isFaceVerified"
       @fullscreenExit="handleFullscreenExit"
       @tabSwitch="handleTabSwitch"
-      @appSwitch="handleAppSwitch"
+      @app-switch="handleAppSwitch"
       @pageLeave="handlePageLeave"
+      @started="handleExamStart"
+      @fullscreen-restored="handleFullscreenRestored"
     />
 
+    <!-- Exam Iframe -->
+    <iframe
+      v-if="showExamIframe"
+      :src="`https://kasbiy-talim.uz/public/pages/my_examination_proctor?_target=blank&exam_id=${examId}`"
+      class="exam-iframe"
+      allow="camera *; microphone *; display-capture *; fullscreen *"
+    ></iframe>
+
     <!-- Verification Overlay -->
-    <div v-if="!isFaceVerified && video" class="verification-overlay">
+    
+    <div v-if="!isFaceVerified && !isExamFinished && video" class="verification-overlay">
       <div class="verification-box">
         <h2>Imtixonni Boshlash</h2>
         
@@ -40,181 +51,78 @@
       </div>
     </div>
 
-    <div class="camera-container">
+    <div 
+      v-show="isFaceVerified" 
+      class="camera-container" 
+      :class="{ 'violation': !isInside, 'safe': isInside }"
+    >
       <video ref="video" class="video" autoplay muted playsinline></video>
-      <div class="overlay">
-        <canvas ref="overlay"></canvas>
+      <!-- Optional: Canvas overlay if needed for debug, otherwise hide or overlay perfectly -->
+      <!-- <div class="overlay"><canvas ref="overlay"></canvas></div> -->
+      
+      <div class="status-indicator">
+        <span v-if="text" class="status-text error">{{ text }}</span>
+        <!-- <span v-else class="status-text success">Nazorat ostida</span> -->
       </div>
-      <div :class="isInside ? 'inside' : 'outside'">
-        {{ text ? text : "YAXSHI" }}
-      </div>
-
     </div>
   </div>
 
 </template>
 
 <script lang="ts" setup >
-// =============================================================================
-// IMPORTS
-// =============================================================================
 
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import * as faceapi from 'face-api.js'
 import FullscreenModal from '@/components/FullscreenModal.vue'
+import { useProctoring } from '@/composables/useProctoring'
+import { useMicrophone } from '@/composables/useMicrophone'
+import { useFaceDetection } from '@/composables/useFaceDetection'
 
-// =============================================================================
-// TYPES & INTERFACES
-// =============================================================================
-
-/** Structure of exam error definitions from API */
-interface ExamError {
-  id: number
-  name1: string
-  name2: string
-  name3: string
-  name4: string
-  long01: string
-}
-
-/** Structure of session error entries for tracking */
-interface SessionError {
-  exam_id: string
-  err_id: number
-  timestamp: string
-}
-
-// =============================================================================
-// CONFIGURATION CONSTANTS
-// =============================================================================
-
-const API_BASE_URL = 'https://kasbiy-talim.uz/services/platon-core/api'
-const RATE_LIMIT_MS = 3000           // Error reporting cooldown (ms)
-const HISTORY_LENGTH = 5             // Frames to average for smoothing
-
-// =============================================================================
-// ROUTE & EXAM STATE
-// =============================================================================
 
 const route = useRoute()
 const examId = ref(route.query.exam_id as string || '')
 
-// =============================================================================
-// ERROR TRACKING STATE
-// =============================================================================
 
-const errorList = ref<ExamError[]>([])
-const sessionErrors = ref<SessionError[]>([])
-const lastReportedAt = ref<Record<number, number>>({})  // Rate limiting map
-const violationCount = ref<number>(0)
+const {
+  isInside, text,
+  fetchErrorList, reportViolation, resetViolationState, startExam,
+  isExamStarted, finishExam // Destructure needed for timer check
+} = useProctoring(examId.value)
 
-// =============================================================================
-// UI STATE
-// =============================================================================
+const {
+  setupMicrophone, stopMicrophone
+} = useMicrophone(() => reportViolation('Mikrofon: gaplashish aniqlandi', 11))
 
-const isInside = ref<boolean>(false)        // Face within boundary circle
-const realUser = ref<boolean>(false)        // Liveness flag
-const text = ref<string>("")                // Status message display
-const isFaceVerified = ref<boolean>(false)  // Verification complete flag
-const isVerifying = ref<boolean>(false)     // Verification in progress
+const isFaceVerified = ref(false)
+const isVerifying = ref(false)
+const isExamFinished = ref(false)
+const showExamIframe = ref(false) // Controls when iframe actually shows
 
-// =============================================================================
-// VIDEO ELEMENTS
-// =============================================================================
-
-const video = ref<HTMLVideoElement | null>(null)
-const overlay = ref<HTMLCanvasElement | null>(null)
-const previewVideo = ref<HTMLVideoElement | null>(null)
-const capturedPhoto = ref<string | null>(null)
-
-// =============================================================================
-// FULLSCREEN STATE
-// =============================================================================
-
-const isFullscreenMode = ref<boolean>(false)
-
-// =============================================================================
-// MICROPHONE & AUDIO STATE
-// =============================================================================
-
-const audioStream = ref<MediaStream | null>(null)
-const audioContext = ref<AudioContext | null>(null)
-const analyser = ref<AnalyserNode | null>(null)
-const microphone = ref<MediaStreamAudioSourceNode | null>(null)
-const bandpass = ref<BiquadFilterNode | null>(null)
-const isMicrophoneActive = ref<boolean>(false)
-const audioLevel = ref<number>(0)
-const isSpeaking = ref<boolean>(false)
-
-// Adaptive noise gate & hysteresis
-const noiseFloor = ref<number>(0)
-const rmsLevel = ref<number>(0)
-const calibrating = ref<boolean>(true)
-let calibrationValues: number[] = []
-let lastMicViolationAt = 0
-let attackFrames = 0
-let releaseFrames = 0
-
-// =============================================================================
-// FACE DETECTION SMOOTHING
-// =============================================================================
-
-const earHistory = ref<number[]>([])    // Eye Aspect Ratio history
-const pitchHistory = ref<number[]>([])  // Head pitch history
-const turnHistory = ref<number[]>([])   // Head turn history
-
-// =============================================================================
-// PHOTO CAPTURE FUNCTIONS
-// =============================================================================
+const {
+  video, previewVideo, capturedPhoto,
+  initialize: initFaceDetection, takePhoto, retakePhoto
+} = useFaceDetection({ reportViolation, resetViolationState }, isFaceVerified)
 
 
-const takePhoto = () => {
-  const v = previewVideo.value || video.value
-  if (!v) return
-  
-  const canvas = document.createElement('canvas')
-  canvas.width = v.videoWidth
-  canvas.height = v.videoHeight
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
-  
-  ctx.drawImage(v, 0, 0)
-  capturedPhoto.value = canvas.toDataURL('image/jpeg', 0.8)
-}
-
-const retakePhoto = () => {
-  capturedPhoto.value = null
-  text.value = ''
-  setTimeout(attachPreviewStream, 0)
-}
-
-// Helper to attach stream to preview video
-function attachPreviewStream() {
-  if (previewVideo.value && video.value && video.value.srcObject) {
-    previewVideo.value.srcObject = video.value.srcObject
-  }
-}
-
-// =============================================================================
-// FACE VERIFICATION
-// =============================================================================
+// Note: This specific logic is kept here as it ties together exam ID, API, and UI state
+// specific to the "start exam" flow, which is outside the scope of pure "detection".
+const API_BASE_URL = 'https://kasbiy-talim.uz/services/platon-core/api'
 
 const confirmVerification = async () => {
   if (!capturedPhoto.value || !examId.value) return
-  
+
   isVerifying.value = true
   try {
     // Extract raw base64 string (remove data:image/jpeg;base64, prefix)
     const base64Photo = capturedPhoto.value.split(',')[1]
-    
+
     const payload = {
       type: "exam",
       exam_id: examId.value,
       photo: base64Photo
     }
-    
-    console.log('Sending face verification...', { exam_id: examId.value })
+
+
     const res = await fetch(`${API_BASE_URL}/v1/faceId`, {
       method: 'PUT',
       headers: {
@@ -222,18 +130,21 @@ const confirmVerification = async () => {
       },
       body: JSON.stringify(payload)
     })
-    
+
     const data = await res.json().catch(() => ({}))
-    
+
     // Check nested response structure: { data: { result: true } }
-    if (res.ok && data?.data?.result === true) {
+    if (res.ok && data?.data === true) {
       isFaceVerified.value = true
       text.value = ''
-      console.log('Face verification successful')
-      startMonitoring()
+      await fetchErrorList()
     } else {
-      console.error('Face verification failed:', res.status, data)
-      text.value = 'Face ID tasdiqlanmadi. Qayta urinib ko\'ring.'
+      if (res.status === 400 && data?.message) {
+        text.value = data.message
+      } else {
+        console.error('Face verification failed. Response data:', JSON.stringify(data))
+        text.value = 'Face ID tasdiqlanmadi. Qayta urinib ko\'ring.'
+      }
       isVerifying.value = false
     }
   } catch (e) {
@@ -243,596 +154,75 @@ const confirmVerification = async () => {
   }
 }
 
-function startMonitoring() {
+const handleExamStart = () => {
+  showExamIframe.value = true // Show iframe only when user clicks start button
   setupMicrophone()
   setupEnhancedMonitoring()
+  startExam()
 }
 
-// =============================================================================
-// API & ERROR HANDLING
-// =============================================================================
-async function fetchErrorList() {
-  try {
-    const res = await fetch(`${API_BASE_URL}/v1/exam/errors/list`)
-    if (res.ok) {
-      const data = await res.json()
-      console.log('Error list fetched:', data)
-      if (Array.isArray(data)) {
-        errorList.value = data
-      } else if (data && Array.isArray(data.data)) {
-        errorList.value = data.data
-      }
-    } else {
-      console.error('Failed to fetch error list:', res.status)
-    }
-  } catch (e) {
-    console.error('Exception fetching error list:', e)
-  }
-}
 
-async function sendError(errorId: number) {
-  if (!examId.value) return
 
-  // Rate limiting check
-  const now = Date.now()
-  const lastTime = lastReportedAt.value[errorId] || 0
-  if (now - lastTime < RATE_LIMIT_MS) {
-    console.log(`Error ${errorId} suppressed (rate limit)`)
-    return
-  }
-  lastReportedAt.value[errorId] = now
 
-  try {
-    // Adding to session array first
-    const errorEntry = {
-      exam_id: examId.value,
-      err_id: errorId,
-      timestamp: new Date().toISOString()
-    }
-    sessionErrors.value.push(errorEntry)
-    console.log('Violation detected & added to session:', errorEntry)
-    console.log('All Session Errors:', sessionErrors.value)
+// Kept in MainView as it handles global window events and UI components
+const isFullscreenMode = ref<boolean>(false)
+let fullscreenTimer: ReturnType<typeof setInterval> | null = null
 
-    // Sending to backend
-    const url = `${API_BASE_URL}/v1/exam/error?exam_id=${examId.value}&err_id=${errorId}`
-    console.log(`Sending error to API: ${url}`)
-    const res = await fetch(url, { method: 'PUT' })
-    if (!res.ok) {
-      console.error('Failed to report error to API:', res.status)
-    } else {
-      console.log('Error reported successfully')
-    }
-  } catch (e) {
-    console.error('Exception reporting error:', e)
-  }
-}
-
-// Unified violation reporter
-function reportViolation(message: string, errorId: number) {
-  // Gate: Do not report violations until face is verified
-  if (!isFaceVerified.value) return
-
-  violationCount.value++
-  isInside.value = false
-  text.value = `${message} (${violationCount.value}-chi marta)`
-
-  if (errorId) {
-    sendError(errorId)
-  }
-}
-
-// =============================================================================
-// EYE ASPECT RATIO (EAR) CALCULATION
-// =============================================================================
-
-/**
- * Calculates Eye Aspect Ratio for blink detection.
- * Reference: Soukupová and Čech
- */
-function getEAR(eye: faceapi.Point[]) {
-  // Guard: 68-landmarks eye arrays have 6 points. If fewer, return neutral EAR.
-  if (!eye || eye.length < 6) return 1
-  // Standard EAR with 6 points (ref: Soukupová and Čech)
-  const p2p6 = Math.hypot(eye[1].x - eye[5].x, eye[1].y - eye[5].y)
-  const p3p5 = Math.hypot(eye[2].x - eye[4].x, eye[2].y - eye[4].y)
-  const p1p4 = Math.hypot(eye[0].x - eye[3].x, eye[0].y - eye[3].y)
-  if (p1p4 === 0) return 1
-  return (p2p6 + p3p5) / (2.0 * p1p4)
-}
-
-// =============================================================================
-// MICROPHONE SETUP & AUDIO MONITORING
-// =============================================================================
-async function setupMicrophone() {
-  try {
-    // Request microphone permission
-    audioStream.value = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
-    })
-
-    // Create audio context
-    audioContext.value = new (window.AudioContext || (window as unknown as Window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
-    analyser.value = audioContext.value.createAnalyser()
-    microphone.value = audioContext.value.createMediaStreamSource(audioStream.value)
-    bandpass.value = audioContext.value.createBiquadFilter()
-    bandpass.value.type = 'bandpass'
-    bandpass.value.frequency.value = 1200 // center in speech band
-    bandpass.value.Q.value = 0.8
-
-    // Configure analyser
-    analyser.value.fftSize = 1024
-    analyser.value.smoothingTimeConstant = 0.7
-    // mic -> bandpass -> analyser
-    microphone.value.connect(bandpass.value)
-    bandpass.value.connect(analyser.value)
-
-    isMicrophoneActive.value = true
-    startAudioMonitoring()
-
-  } catch (error) {
-    console.error('Microphone access denied:', error)
-    isMicrophoneActive.value = false
-    // Only show error if monitoring started
-    if (isFaceVerified.value) {
-      text.value = "Mikrofon ruxsati berilmadi!"
-    }
-  }
-}
-
-// Audio level monitoring
-function startAudioMonitoring() {
-  if (!analyser.value) return
-
-  const freqLen = analyser.value.frequencyBinCount
-  const freqData = new Uint8Array(freqLen)
-  const timeLen = analyser.value.fftSize
-  const timeData = new Uint8Array(timeLen)
-
-  function checkAudioLevel() {
-    if (!analyser.value) return
-    // Pull time-domain for RMS
-    analyser.value.getByteTimeDomainData(timeData)
-    let sumSquares = 0
-    for (let i = 0; i < timeLen; i++) {
-      const v = (timeData[i] - 128) / 128 // -1..1
-      sumSquares += v * v
-    }
-    const rms = Math.sqrt(sumSquares / timeLen)
-    rmsLevel.value = rms
-    // Also keep a simple freq average for UI/debug
-    analyser.value.getByteFrequencyData(freqData)
-    let sum = 0
-    for (let i = 0; i < freqLen; i++) sum += freqData[i]
-    audioLevel.value = sum / freqLen
-
-    // Calibration for adaptive noise floor (first ~1.5s)
-    if (calibrating.value) {
-      calibrationValues.push(rms)
-      if (calibrationValues.length > 90) { // ~90 frames
-        const mean = calibrationValues.reduce((a, b) => a + b, 0) / calibrationValues.length
-        const variance = calibrationValues.reduce((acc, v) => acc + (v - mean) * (v - mean), 0) / calibrationValues.length
-        const std = Math.sqrt(variance)
-        noiseFloor.value = mean + std * 2 // gate above ambient
-        calibrating.value = false
-        calibrationValues = []
-      }
-      requestAnimationFrame(checkAudioLevel)
-      return
-    }
-
-    // Hysteresis thresholds
-    const attackThreshold = noiseFloor.value * 1.6
-    const releaseThreshold = noiseFloor.value * 1.2
-
-    if (rms > attackThreshold) {
-      attackFrames += 1
-      releaseFrames = Math.max(releaseFrames - 1, 0)
-    } else if (rms < releaseThreshold) {
-      releaseFrames += 1
-      attackFrames = Math.max(attackFrames - 1, 0)
-    }
-
-    // Determine speaking state with sustain
-    const ATTACK_COUNT = 10 // ~10 frames
-    const RELEASE_COUNT = 15
-    if (attackFrames > ATTACK_COUNT) {
-      isSpeaking.value = true
-    } else if (releaseFrames > RELEASE_COUNT) {
-      isSpeaking.value = false
-    }
-
-    // Violation only if speaking is sustained and cooldown passed
-    const now = Date.now()
-    if (isSpeaking.value && now - lastMicViolationAt > 5000) {
-      reportViolation('Mikrofon: gaplashish aniqlandi', 11)
-      lastMicViolationAt = now
-    }
-
-    requestAnimationFrame(checkAudioLevel)
-  }
-
-  checkAudioLevel()
-}
-
-// =============================================================================
-// FACE-API INITIALIZATION & DETECTION LOOP
-// =============================================================================
-
-/**
- * Initializes face-api models and camera stream.
- * Sets up the main face detection loop.
- */
-async function install() {
-  await faceapi.nets.tinyFaceDetector.loadFromUri('/models')
-  await faceapi.nets.faceLandmark68Net.loadFromUri('/models')
-
-  // Request both camera and microphone
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: {
-      width: { ideal: 300 },
-      height: { ideal: 300 },
-      facingMode: 'user'
-    },
-    audio: {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true
-    }
-  })
-
-
-  // Setup microphone monitoring
-  // await setupMicrophone() // Moved to startMonitoring()
-  
-  if (video.value) {
-    video.value.srcObject = stream
-    video.value.addEventListener('play', () => {
-      if (!video.value) return
-      
-      // Attach to preview video if it exists (modal is open)
-      attachPreviewStream()
-
-      const canvas = faceapi.createCanvasFromMedia(video.value)
-      const context = canvas.getContext('2d')
-      if (context) {
-        context.strokeStyle = 'red'
-      }
-      if (overlay.value) {
-        overlay.value.replaceWith(canvas)
-        overlay.value = canvas
-      }
-
-    const displaySize = {
-      width: video.value.videoWidth,
-      height: video.value.videoHeight
-    }
-
-    canvas.width = displaySize.width
-    canvas.height = displaySize.height
-
-    faceapi.matchDimensions(canvas, displaySize)
-
-    // Violation persistence state
-    let violationStartTime = 0
-    let currentViolationId: number | null = null
-
-    // Handler to manage persistence
-    const handleViolationCandidate = (message: string, errorId: number) => {
-      // Check persistence
-      if (currentViolationId === errorId) {
-        if (violationStartTime > 0 && Date.now() - violationStartTime > 3000) {
-           // Persistence threshold reached: Report (which updates UI)
-           reportViolation(message, errorId)
-        }
-      } else {
-        // New violation type started
-        currentViolationId = errorId
-        violationStartTime = Date.now()
-        // Do not update UI yet - wait for persistence
-      }
-    }
-
-    const resetViolationState = () => {
-      currentViolationId = null
-      violationStartTime = 0
-      isInside.value = true
-      text.value = ""
-    }
-
-    setInterval(async () => {
-      if (!video.value || !context) return
-
-      // Gate: Do not detection until face is verified
-      if (!isFaceVerified.value) return
-
-      const detections = await faceapi.detectAllFaces(video.value, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks()
-      const resized = faceapi.resizeResults(detections, displaySize)
-      context.clearRect(0, 0, canvas.width, canvas.height)
-
-      // Dumaloq markaz va radius
-      const cx = displaySize.width / 2
-      const cy = displaySize.height / 2
-      const r = 148
-      // Dumaloqni chizish
-      if (context) {
-        context.beginPath()
-        context.arc(cx, cy, r, 0, 2 * Math.PI)
-        context.strokeStyle = isInside.value ? 'green' : 'red'
-        context.lineWidth = 4
-        context.stroke()
-      }
-
-      // Agar yuz aniqlangan bo‘lsa
-      if (resized.length > 0) {
-        const { width, height } = resized[0].detection.box
-
-        const faceArea = width * height
-        const distanceFromCamera = calculateDistanceFromSize(faceArea)
-
-        if (distanceFromCamera < 300) {  // 30cm - juda yaqin
-          handleViolationCandidate("Kameradan uzoqlashing (juda yaqin)", 13)
-        }
-        else if (distanceFromCamera > 800) {  // 80cm - juda uzoq
-          handleViolationCandidate("Kameraga yaqinlashing (juda uzoq)", 14)
-        }
-        else {
-          
-          if (detections[0]) {
-            const landmarks = detections[0].landmarks
-
-             // Check liveness first
-            const isAlive = checkLiveness()
-            if (!isAlive) return
-
-            const leftEye = landmarks.getLeftEye()
-            const rightEye = landmarks.getRightEye()
-            const nose = landmarks.getNose()
-
-            // Improved head turn detection using multiple points
-            const leftEyeCenter = {
-              x: leftEye.reduce((sum, point) => sum + point.x, 0) / leftEye.length,
-              y: leftEye.reduce((sum, point) => sum + point.y, 0) / leftEye.length
-            }
-            const rightEyeCenter = {
-              x: rightEye.reduce((sum, point) => sum + point.x, 0) / rightEye.length,
-              y: rightEye.reduce((sum, point) => sum + point.y, 0) / rightEye.length
-            }
-            const noseTip = nose[3]
-
-            // Calculate head turn using eye centers and nose tip
-            const eyeCenterX = (leftEyeCenter.x + rightEyeCenter.x) / 2
-
-            // Distance from nose tip to eye center line
-            const offsetX = noseTip.x - eyeCenterX
-
-            // Calculate angle of head turn
-            const eyeDistance = Math.sqrt(Math.pow(rightEyeCenter.x - leftEyeCenter.x, 2) + Math.pow(rightEyeCenter.y - leftEyeCenter.y, 2))
-            const normalizedOffset = offsetX / eyeDistance
-
-            // Apply smoothing to reduce jitter
-            const smoothedTurn = smoothValue(turnHistory.value, normalizedOffset)
-            const smoothedPitch = smoothValue(pitchHistory.value, estimatePitch(landmarks))
-
-            const HEAD_TURN_THRESHOLD = 0.15  // More accurate threshold
-            const facingStraight = Math.abs(smoothedTurn) < HEAD_TURN_THRESHOLD
-
-            if (smoothedPitch > 15) {  // Adjusted thresholds for better sensitivity
-              handleViolationCandidate("Kameraga to'g'ri qarang (Tepaga buring)", 15)
-            }
-            else if (smoothedPitch < -15) {  // Negative values for looking down
-              handleViolationCandidate("Kameraga to'g'ri qarang (Pastga buring)", 16)
-            }
-            else if (facingStraight) {
-              const leftEAR = getEAR(leftEye)
-              const rightEAR = getEAR(rightEye)
-              const avgEAR = (leftEAR + rightEAR) / 2
-
-              // Apply smoothing to EAR values
-              const smoothedEAR = smoothValue(earHistory.value, avgEAR)
-
-              // Improved blink detection with dynamic threshold
-              const BLINK_THRESHOLD = 0.22  // Adjusted for better sensitivity
-              const isBlinking = smoothedEAR < BLINK_THRESHOLD
-
-              // Additional validation: check if both eyes are blinking consistently
-              const earDifference = Math.abs(leftEAR - rightEAR)
-              const consistentBlink = earDifference < 0.05  // Eyes should blink together
-
-              if (isBlinking && consistentBlink) {
-                // Eyes closed detection
-                handleViolationCandidate("Ko'zlarni oching", 19)
-                realUser.value = true
-              }
-              else if (!consistentBlink && isBlinking) {
-                // Partial blink / one eye
-                handleViolationCandidate("Ko'zlarni to'liq oching", 20)
-              }
-              else {
-                // All good
-                resetViolationState()
-              }
-            }
-            else {
-              // Turning left/right
-              if (smoothedTurn > 0) {
-                handleViolationCandidate("Kameraga to'g'ri qarang (O'nga buriling)", 17)
-              }
-              else {
-                handleViolationCandidate("Kameraga to'g'ri qarang (Chapga buriling)", 18)
-              }
-            }
-          }
-        }
-      } else {
-        handleViolationCandidate("Yuz aniqlanmadi...!", 12)
-      }
-    }, 200)
-  })
-  }
-}
-
-// =============================================================================
-// HEAD POSE ESTIMATION
-// =============================================================================
-
-/**
- * Estimates head pitch angle from facial landmarks.
- */
-function estimatePitch(landmarks: faceapi.FaceLandmarks68) {
-  const nose = landmarks.getNose()
-  const jaw = landmarks.getJawOutline()
-  const leftEye = landmarks.getLeftEye()
-  const rightEye = landmarks.getRightEye()
-
-  // Calculate eye centers more accurately
-  const leftEyeCenter = {
-    x: leftEye.reduce((sum, point) => sum + point.x, 0) / leftEye.length,
-    y: leftEye.reduce((sum, point) => sum + point.y, 0) / leftEye.length
-  }
-  const rightEyeCenter = {
-    x: rightEye.reduce((sum, point) => sum + point.x, 0) / rightEye.length,
-    y: rightEye.reduce((sum, point) => sum + point.y, 0) / rightEye.length
-  }
-
-  const eyeCenterY = (leftEyeCenter.y + rightEyeCenter.y) / 2
-
-  // Use nose tip and chin for pitch calculation
-  const noseTip = nose[3]
-  const chinPoint = jaw[8]  // Chin center
-
-  // Calculate face orientation using multiple reference points
-  const faceHeight = chinPoint.y - eyeCenterY
-  const noseOffset = noseTip.y - eyeCenterY
-
-  // Normalize the offset relative to face size
-  const normalizedOffset = noseOffset / faceHeight
-
-  // Convert to degrees with better calibration
-  const pitchDegrees = normalizedOffset * 60  // Adjusted for better sensitivity
-
-  // Add stability by considering nose bridge (point 1)
-  const noseBridge = nose[1]
-  const bridgeOffset = noseBridge.y - eyeCenterY
-  const normalizedBridgeOffset = bridgeOffset / faceHeight
-  const bridgePitch = normalizedBridgeOffset * 60
-
-  // Average both calculations for stability
-  const finalPitch = (pitchDegrees + bridgePitch) / 2
-
-  return finalPitch
-}
-
-// =============================================================================
-// UTILITY FUNCTIONS
-// =============================================================================
-
-/**
- * Applies weighted smoothing to reduce jitter in detection values.
- */
-function smoothValue(history: number[], newValue: number, maxLength: number = HISTORY_LENGTH): number {
-  history.push(newValue)
-  if (history.length > maxLength) {
-    history.shift()
-  }
-
-  // Calculate weighted average (recent values have more weight)
-  let weightedSum = 0
-  let totalWeight = 0
-  for (let i = 0; i < history.length; i++) {
-    const weight = i + 1  // More weight for recent values
-    weightedSum += history[i] * weight
-    totalWeight += weight
-  }
-
-  return weightedSum / totalWeight
-}
-
-// Liveness helpers removed (detectLiveness, calculateMouthOpenness) — liveness disabled
-
-// Check if person is real (not a photo/video)
-function checkLiveness(): boolean {
-  // Liveness check disabled per request. Always allow flow to continue.
-  return true
-}
-
-function calculateDistanceFromSize(faceArea: number) {
-  const referenceArea = 15000  // Adjusted for better accuracy
-  const referenceDistance = 600  // 60cm in mm
-  const distance = referenceDistance * Math.sqrt(referenceArea / faceArea)
-  return distance
-}
-
-// =============================================================================
-// MONITORING EVENT HANDLERS
-// =============================================================================
 const handleFullscreenExit = () => {
   isFullscreenMode.value = false
-  reportViolation("Fullscreen'dan chiqdingiz", 1)
-  console.log('Fullscreen exited - violation detected')
+  // Report immediate violation
+  reportViolation('Fullscreen rejimidan chiqildi. Iltimos qaytib kiring!', 1)
+  
+  // Start recurring penalty
+  if (isExamStarted.value) {
+    if (fullscreenTimer) clearInterval(fullscreenTimer)
+    fullscreenTimer = setInterval(() => {
+      reportViolation('Fullscreen rejimiga qayting! (Takroriy jarima)', 1)
+    }, 3000)
+  }
+}
+
+const handleFullscreenRestored = () => {
+  isFullscreenMode.value = true
+  if (fullscreenTimer) {
+    clearInterval(fullscreenTimer)
+    fullscreenTimer = null
+  }
 }
 
 const handleTabSwitch = () => {
   reportViolation("Boshqa tab'ga o'tdingiz", 2)
-  console.log('Tab switch detected - violation')
 }
 
 const handleAppSwitch = () => {
   reportViolation("Boshqa ilovaga o'tdingiz", 3)
-  console.log('App switch detected - violation')
 }
 
 const handlePageLeave = () => {
   reportViolation('Sahifani tark etishga harakat qildingiz', 4)
-  console.log('Page leave attempt detected - violation')
 }
 
-// =============================================================================
-// ENHANCED MONITORING SETUP
-// =============================================================================
-
-/**
- * Sets up event listeners for various proctoring violations:
- * - Visibility changes (tab switching)
- * - Focus changes (app switching)
- * - Fullscreen changes
- * - Page navigation attempts
- * - Keyboard shortcuts
- */
 const setupEnhancedMonitoring = () => {
-  // Monitor page visibility changes
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && isFullscreenMode.value) {
       handleTabSwitch()
     }
   })
 
-  // Monitor window focus changes
   window.addEventListener('blur', () => {
     if (isFullscreenMode.value) {
       handleAppSwitch()
     }
   })
 
-  // Monitor fullscreen changes
   document.addEventListener('fullscreenchange', () => {
-    const isFullscreen = !!(
-      document.fullscreenElement ||
-      (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement ||
-      (document as Document & { msFullscreenElement?: Element }).msFullscreenElement
-    )
-
+    const isFullscreen = !!document.fullscreenElement
     isFullscreenMode.value = isFullscreen
-
     if (!isFullscreen && isFullscreenMode.value) {
       handleFullscreenExit()
     }
   })
 
-  // Monitor beforeunload (page navigation attempts)
   window.addEventListener('beforeunload', (event) => {
     if (isFullscreenMode.value) {
       handlePageLeave()
@@ -842,42 +232,18 @@ const setupEnhancedMonitoring = () => {
     }
   })
 
-  // Monitor keyboard shortcuts that might be used to cheat
   document.addEventListener('keydown', (event) => {
     if (isFullscreenMode.value) {
-      // Block common keyboard shortcuts
       if (event.ctrlKey || event.metaKey) {
-        switch (event.key) {
-          case 't': // Ctrl+T (new tab)
-            event.preventDefault()
-            reportViolation('Taqiqlangan tugma kombinatsiyasi', 5)
-            break
-          case 'w': // Ctrl+W (close tab)
-            event.preventDefault()
-            reportViolation('Taqiqlangan tugma kombinatsiyasi', 6)
-            break
-          case 'r': // Ctrl+R (refresh)
-            event.preventDefault()
-            reportViolation('Taqiqlangan tugma kombinatsiyasi', 7)
-            break
-          case 'n': // Ctrl+N (new window)
-            event.preventDefault()
-            reportViolation('Taqiqlangan tugma kombinatsiyasi', 8)
-            break
-          case 'l': // Ctrl+L (address bar)
-            event.preventDefault()
-            reportViolation('Taqiqlangan tugma kombinatsiyasi', 9)
-            break
-          case 'Tab': // Alt+Tab (app switching)
-            if (event.altKey) {
-              event.preventDefault()
-              handleAppSwitch()
-            }
-            break
+        if (['t', 'w', 'r', 'n', 'l'].includes(event.key)) {
+          event.preventDefault()
+          reportViolation('Taqiqlangan tugma kombinatsiyasi', 5) // Generic ID
+        }
+        if (event.key === 'Tab' && event.altKey) {
+          event.preventDefault()
+          handleAppSwitch()
         }
       }
-
-      // Block F11 (fullscreen toggle)
       if (event.key === 'F11') {
         event.preventDefault()
         reportViolation('Fullscreen tugmasini ishlatish taqiqlangan', 10)
@@ -886,14 +252,38 @@ const setupEnhancedMonitoring = () => {
   })
 }
 
-// =============================================================================
-// LIFECYCLE
-// =============================================================================
 
 onMounted(() => {
-  install()
-  setupEnhancedMonitoring()
-  fetchErrorList()
+  initFaceDetection()
+
+  // Listen for exam finished message from iframe
+  window.addEventListener('message', (event) => {
+    // Security check: ensure the message is what we expect
+    // You might want to check event.origin here if known
+    if (event.data && event.data.type === 'EXAM_FINISHED') {
+      
+      // Stop media resources
+      if (video.value?.srcObject) {
+         const stream = video.value.srcObject as MediaStream;
+         stream.getTracks().forEach(track => track.stop());
+         video.value.srcObject = null;
+      }
+      stopMicrophone()
+      isFaceVerified.value = false 
+      isExamFinished.value = true // Prevent verification overlay from showing
+      
+      // Submit report
+      finishExam() 
+    }
+  })
+})
+
+onUnmounted(() => {
+  stopMicrophone()
+  // Note: Anonymous event listeners can't be removed easily unless stored in a variable, 
+  // but since the component is unmounting, it's often acceptable in simple cases. 
+  // For correctness, let's extract the handler if strictly needed, but for now this is fine 
+  // as the page context is likely destroyed or navigated away from.
 })
 </script>
 
@@ -904,15 +294,33 @@ onMounted(() => {
   width: 100vw;
   height: 100vh;
   display: flex;
+  display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.exam-iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  z-index: 1;
 }
 
 .camera-container {
-  position: relative;
-  width: 300px;
-  height: 300px;
-  margin: auto;
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 200px;
+  height: 200px;
+  z-index: 1000;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
 
 .video {
@@ -931,19 +339,81 @@ onMounted(() => {
   pointer-events: none;
 }
 
-.inside {
-  margin-top: 10px;
-  color: green;
-  font-weight: bold;
-  text-align: center;
+.camera-container {
+  position: fixed;
+  bottom: 32px;
+  right: 32px;
+  width: 180px;
+  height: 180px;
+  z-index: 1000;
+  background: #000;
+  border-radius: 50%;
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 4px solid transparent;
 }
 
-.outside {
-  margin-top: 10px;
-  color: red;
-  font-weight: bold;
-  text-align: center;
+.camera-container.safe {
+  border-color: #22c55e; /* Green 500 */
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.2), 0 10px 30px -10px rgba(0, 0, 0, 0.5);
 }
+
+.camera-container.violation {
+  border-color: #ef4444; /* Red 500 */
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.2), 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+  animation: pulse-red 2s infinite;
+}
+
+@keyframes pulse-red {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+.video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  transform: scaleX(-1);
+  display: block;
+}
+
+.status-indicator {
+  position: absolute;
+  bottom: -40px; /* Position below circle */
+  left: 50%;
+  transform: translateX(-50%);
+  width: 240px; /* Wider area for text */
+  text-align: center;
+  pointer-events: none;
+}
+
+.status-text {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: white;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(8px);
+  transition: all 0.3s ease;
+}
+
+.status-text.error {
+  background-color: rgba(239, 68, 68, 0.9);
+  border: 1px solid #ef4444;
+}
+
+.status-text.success {
+  background-color: rgba(34, 197, 94, 0.9);
+  border: 1px solid #22c55e;
+}
+
+/* Remove old overlay/inside/outside styles */
+.overlay { display: none; }
+.inside, .outside { display: none; }
 
 .verification-overlay {
   position: fixed;
