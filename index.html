@@ -1,17 +1,29 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="uz">
+  <head>
+    <meta charset="UTF-8" />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="https://kasbiy-talim.uz/services/platon-core/web/v1/store/file/main_logo/Mainlogo.svg"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Proctoring</title>
+  </head>
 
-<head>
-  <meta charset="UTF-8">
-  <link rel="icon" type="image/svg+xml"
-    href="https://kasbiy-talim.uz/services/platon-core/web/v1/store/file/main_logo/Mainlogo.svg">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Proctoring</title>
-</head>
-
-<body>
-  <div id="app"></div>
-  <script type="module" src="/src/main.ts"></script>
-</body>
-
+  <body>
+    <div id="app"></div>
+    <script>
+      try {
+        if (typeof window !== "undefined") {
+          Object.defineProperty(window, "__VUE_DEVTOOLS_GLOBAL_HOOK__", {
+            value: undefined,
+            writable: false,
+            configurable: false,
+          });
+        }
+      } catch (e) {}
+    </script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
 </html>

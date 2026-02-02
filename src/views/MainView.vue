@@ -23,7 +23,6 @@
 
         <div v-if="!capturedPhoto">
           <p>Iltimos, imtixonni boshlash uchun yuzingizni tasdiqlang</p>
-          <!-- Live Preview inside modal -->
           <div class="live-preview-container">
             <video ref="previewVideo" class="live-preview" autoplay muted playsinline></video>
           </div>
@@ -75,7 +74,7 @@ const {
   resetViolationState,
   startExam,
   isExamStarted,
-  finishExam, // Destructure needed for timer check
+  finishExam,
 } = useProctoring(examId.value);
 
 const { setupMicrophone, stopMicrophone } = useMicrophone(() =>
