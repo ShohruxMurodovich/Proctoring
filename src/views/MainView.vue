@@ -66,6 +66,38 @@ import { useFaceDetection } from "@/composables/useFaceDetection";
 const route = useRoute();
 const examId = ref((route.query.exam_id as string) || "");
 
+const isFaceVerified = ref(false);
+const isVerifying = ref(false);
+const isExamFinished = ref(false);
+const showExamIframe = ref(false);
+
+// Create temporary refs for face detection
+const tempReportViolation = ref<((message: string, errorId: number) => void) | null>(null);
+const tempResetViolationState = ref<(() => void) | null>(null);
+
+// Initialize face detection with wrapper functions
+const {
+  video,
+  previewVideo,
+  capturedPhoto,
+  initialize: initFaceDetection,
+  takePhoto,
+  retakePhoto,
+  captureCurrentFrame,
+} = useFaceDetection({ 
+  reportViolation: (message: string, errorId: number) => {
+    if (tempReportViolation.value) {
+      tempReportViolation.value(message, errorId);
+    }
+  },
+  resetViolationState: () => {
+    if (tempResetViolationState.value) {
+      tempResetViolationState.value();
+    }
+  }
+}, isFaceVerified);
+
+// Now initialize proctoring with the capture function
 const {
   isInside,
   text,
@@ -75,25 +107,15 @@ const {
   startExam,
   isExamStarted,
   finishExam,
-} = useProctoring(examId.value);
+} = useProctoring(examId.value, captureCurrentFrame);
+
+// Connect the functions
+tempReportViolation.value = reportViolation;
+tempResetViolationState.value = resetViolationState;
 
 const { setupMicrophone, stopMicrophone } = useMicrophone(() =>
   reportViolation("Mikrofon: gaplashish aniqlandi", 11),
 );
-
-const isFaceVerified = ref(false);
-const isVerifying = ref(false);
-const isExamFinished = ref(false);
-const showExamIframe = ref(false);
-
-const {
-  video,
-  previewVideo,
-  capturedPhoto,
-  initialize: initFaceDetection,
-  takePhoto,
-  retakePhoto,
-} = useFaceDetection({ reportViolation, resetViolationState }, isFaceVerified);
 
 const API_BASE_URL = "https://kasbiy-talim.uz/services/platon-core/api";
 

@@ -21,7 +21,7 @@ export const MIN_PASSING_SCORE = 50
 
 
 /** Minimum interval between same error reports (ms) */
-export const RATE_LIMIT_MS = 3000
+export const RATE_LIMIT_MS = 10000
 
 /** Time a violation must persist before being reported (ms) */
 export const VIOLATION_PERSISTENCE_MS = 3000

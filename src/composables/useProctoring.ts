@@ -25,13 +25,14 @@ export interface ExamError {
 export interface ViolationEntry {
     err_id: number
     ball: number
+    img?: string  // Base64 image data
 }
 
 
 
 
 
-export function useProctoring(examId: string) {
+export function useProctoring(examId: string, captureImage?: () => string | null) {
 
 
 
@@ -64,7 +65,8 @@ export function useProctoring(examId: string) {
                     if (data.data.user_err && Array.isArray(data.data.user_err) && data.data.user_err.length > 0) {
                         sessionErrors.value = data.data.user_err.map((e: any) => ({
                             err_id: e.err_id,
-                            ball: e.ball
+                            ball: e.ball,
+                            img: e.img  // Capture image data from API
                         }))
                     }
                 }
@@ -117,9 +119,32 @@ export function useProctoring(examId: string) {
                 handleExamFailure()
             }
 
-            // Send to backend
-            const url = `${API_BASE_URL}/v1/exam/error?exam_id=${examId}&err_id=${errorId}`
-            const res = await fetch(url, { method: 'PUT' })
+            // Capture image when error occurs
+            let base64Image: string | null = null
+            if (captureImage) {
+                const imageData = captureImage()
+                if (imageData) {
+                    // Remove data:image/jpeg;base64, prefix if present
+                    base64Image = imageData.includes(',') ? imageData.split(',')[1] : imageData
+                }
+            }
+
+            // Send to backend with image
+            const url = `${API_BASE_URL}/v1/exam/error`
+            const payload = {
+                exam_id: examId,
+                err_id: errorId,
+                img: base64Image
+            }
+
+            const res = await fetch(url, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            })
+
             if (!res.ok) {
                 console.error('Failed to report error to API:', res.status)
             }
@@ -128,18 +153,14 @@ export function useProctoring(examId: string) {
         }
     }
 
-    /**
-     * Handles exam failure when score drops below threshold.
-     */
+
     function handleExamFailure() {
         console.warn('USER FAILED EXAM (Score < 50)')
         alert('Imtixon topshirilmadi! (Ball yetarli emas)')
-        // TODO: Emit failure event as requested later
     }
 
     /**
-     * Reports a violation with UI update and API call.
-     * Should only be called after face verification is complete.
+     * Reports a violation to the system.
      * @param message - User-facing violation message
      * @param errorId - The ID of the error to report
      */
@@ -172,10 +193,6 @@ export function useProctoring(examId: string) {
         isExamStarted.value = false
     }
 
-    /**
-     * Submits the final report of all violations.
-     * @param apiEndpoint - Optional endpoint if provided later
-     */
     /**
      * Submits the final report of all violations.
      */

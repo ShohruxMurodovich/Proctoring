@@ -174,6 +174,24 @@ export function useFaceDetection(
     }
 
     /**
+     * Captures the current frame from video as base64 string.
+     * Used for error reporting.
+     */
+    function captureCurrentFrame(): string | null {
+        const v = video.value
+        if (!v || !v.videoWidth || !v.videoHeight) return null
+
+        const canvas = document.createElement('canvas')
+        canvas.width = v.videoWidth
+        canvas.height = v.videoHeight
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return null
+
+        ctx.drawImage(v, 0, 0)
+        return canvas.toDataURL('image/jpeg', 0.8)
+    }
+
+    /**
      * Attaches video stream to preview element.
      */
     function attachPreviewStream(): void {
@@ -386,6 +404,7 @@ export function useFaceDetection(
         initialize,
         takePhoto,
         retakePhoto,
-        attachPreviewStream
+        attachPreviewStream,
+        captureCurrentFrame
     }
 }
