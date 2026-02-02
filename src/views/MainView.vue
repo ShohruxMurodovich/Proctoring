@@ -1,6 +1,5 @@
 <template>
   <div class="container">
-    <!-- Fullscreen Modal Component -->
     <FullscreenModal
       v-if="isFaceVerified"
       @fullscreenExit="handleFullscreenExit"
@@ -11,7 +10,6 @@
       @fullscreen-restored="handleFullscreenRestored"
     />
 
-    <!-- Exam Iframe -->
     <iframe
       v-if="showExamIframe"
       :src="`https://kasbiy-talim.uz/public/pages/my_examination_proctor?_target=blank&exam_id=${examId}`"
@@ -19,12 +17,10 @@
       allow="camera *; microphone *; display-capture *; fullscreen *"
     ></iframe>
 
-    <!-- Verification Overlay -->
-    
     <div v-if="!isFaceVerified && !isExamFinished && video" class="verification-overlay">
       <div class="verification-box">
         <h2>Imtixonni Boshlash</h2>
-        
+
         <div v-if="!capturedPhoto">
           <p>Iltimos, imtixonni boshlash uchun yuzingizni tasdiqlang</p>
           <!-- Live Preview inside modal -->
@@ -36,259 +32,232 @@
 
         <div v-else>
           <img :src="capturedPhoto" class="captured-preview" />
-          <p v-if="text" style="color: red; margin: 10px 0;">{{ text }}</p>
+          <p v-if="text" style="color: red; margin: 10px 0">{{ text }}</p>
           <div class="buttons-row">
             <button @click="retakePhoto" class="verify-btn secondary">Qayta olish</button>
-            <button 
-              @click="confirmVerification" 
-              class="verify-btn"
-              :disabled="isVerifying"
-            >
-              {{ isVerifying ? 'Yuborilmoqda...' : 'Yuborish' }}
+            <button @click="confirmVerification" class="verify-btn" :disabled="isVerifying">
+              {{ isVerifying ? "Yuborilmoqda..." : "Yuborish" }}
             </button>
           </div>
         </div>
       </div>
     </div>
 
-    <div 
-      v-show="isFaceVerified" 
-      class="camera-container" 
-      :class="{ 'violation': !isInside, 'safe': isInside }"
+    <div
+      v-show="isFaceVerified"
+      class="camera-container"
+      :class="{ violation: !isInside, safe: isInside }"
     >
       <video ref="video" class="video" autoplay muted playsinline></video>
-      <!-- Optional: Canvas overlay if needed for debug, otherwise hide or overlay perfectly -->
-      <!-- <div class="overlay"><canvas ref="overlay"></canvas></div> -->
-      
       <div class="status-indicator">
         <span v-if="text" class="status-text error">{{ text }}</span>
-        <!-- <span v-else class="status-text success">Nazorat ostida</span> -->
       </div>
     </div>
   </div>
-
 </template>
 
-<script lang="ts" setup >
+<script lang="ts" setup>
+import { ref, onMounted, onUnmounted } from "vue";
+import { useRoute } from "vue-router";
+import FullscreenModal from "@/components/FullscreenModal.vue";
+import { useProctoring } from "@/composables/useProctoring";
+import { useMicrophone } from "@/composables/useMicrophone";
+import { useFaceDetection } from "@/composables/useFaceDetection";
 
-import { ref, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
-import FullscreenModal from '@/components/FullscreenModal.vue'
-import { useProctoring } from '@/composables/useProctoring'
-import { useMicrophone } from '@/composables/useMicrophone'
-import { useFaceDetection } from '@/composables/useFaceDetection'
-
-
-const route = useRoute()
-const examId = ref(route.query.exam_id as string || '')
-
+const route = useRoute();
+const examId = ref((route.query.exam_id as string) || "");
 
 const {
-  isInside, text,
-  fetchErrorList, reportViolation, resetViolationState, startExam,
-  isExamStarted, finishExam // Destructure needed for timer check
-} = useProctoring(examId.value)
+  isInside,
+  text,
+  fetchErrorList,
+  reportViolation,
+  resetViolationState,
+  startExam,
+  isExamStarted,
+  finishExam, // Destructure needed for timer check
+} = useProctoring(examId.value);
+
+const { setupMicrophone, stopMicrophone } = useMicrophone(() =>
+  reportViolation("Mikrofon: gaplashish aniqlandi", 11),
+);
+
+const isFaceVerified = ref(false);
+const isVerifying = ref(false);
+const isExamFinished = ref(false);
+const showExamIframe = ref(false);
 
 const {
-  setupMicrophone, stopMicrophone
-} = useMicrophone(() => reportViolation('Mikrofon: gaplashish aniqlandi', 11))
+  video,
+  previewVideo,
+  capturedPhoto,
+  initialize: initFaceDetection,
+  takePhoto,
+  retakePhoto,
+} = useFaceDetection({ reportViolation, resetViolationState }, isFaceVerified);
 
-const isFaceVerified = ref(false)
-const isVerifying = ref(false)
-const isExamFinished = ref(false)
-const showExamIframe = ref(false) // Controls when iframe actually shows
-
-const {
-  video, previewVideo, capturedPhoto,
-  initialize: initFaceDetection, takePhoto, retakePhoto
-} = useFaceDetection({ reportViolation, resetViolationState }, isFaceVerified)
-
-
-// Note: This specific logic is kept here as it ties together exam ID, API, and UI state
-// specific to the "start exam" flow, which is outside the scope of pure "detection".
-const API_BASE_URL = 'https://kasbiy-talim.uz/services/platon-core/api'
+const API_BASE_URL = "https://kasbiy-talim.uz/services/platon-core/api";
 
 const confirmVerification = async () => {
-  if (!capturedPhoto.value || !examId.value) return
+  if (!capturedPhoto.value || !examId.value) return;
 
-  isVerifying.value = true
+  isVerifying.value = true;
   try {
-    // Extract raw base64 string (remove data:image/jpeg;base64, prefix)
-    const base64Photo = capturedPhoto.value.split(',')[1]
+    const base64Photo = capturedPhoto.value.split(",")[1];
 
     const payload = {
       type: "exam",
       exam_id: examId.value,
-      photo: base64Photo
-    }
-
+      photo: base64Photo,
+    };
 
     const res = await fetch(`${API_BASE_URL}/v1/faceId`, {
-      method: 'PUT',
+      method: "PUT",
       headers: {
-        'Content-Type': 'application/json'
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify(payload)
-    })
+      body: JSON.stringify(payload),
+    });
 
-    const data = await res.json().catch(() => ({}))
-
-    // Check nested response structure: { data: { result: true } }
-    if (res.ok && data?.data === true) {
-      isFaceVerified.value = true
-      text.value = ''
-      await fetchErrorList()
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data?.data == true) {
+      isFaceVerified.value = true;
+      text.value = "";
+      await fetchErrorList();
     } else {
       if (res.status === 400 && data?.message) {
-        text.value = data.message
+        text.value = data.message;
       } else {
-        console.error('Face verification failed. Response data:', JSON.stringify(data))
-        text.value = 'Face ID tasdiqlanmadi. Qayta urinib ko\'ring.'
+        console.error("Face verification failed. Response data:", JSON.stringify(data));
+        text.value = "Face ID tasdiqlanmadi. Qayta urinib ko'ring.";
       }
-      isVerifying.value = false
+      isVerifying.value = false;
     }
   } catch (e) {
-    console.error('Face verification exception:', e)
-    text.value = 'Xatolik yuz berdi.'
-    isVerifying.value = false
+    console.error("Face verification exception:", e);
+    text.value = "Xatolik yuz berdi.";
+    isVerifying.value = false;
   }
-}
+};
 
 const handleExamStart = () => {
-  showExamIframe.value = true // Show iframe only when user clicks start button
-  setupMicrophone()
-  setupEnhancedMonitoring()
-  startExam()
-}
+  showExamIframe.value = true; // Show iframe only when user clicks start button
+  setupMicrophone();
+  setupEnhancedMonitoring();
+  startExam();
+};
 
-
-
-
-// Kept in MainView as it handles global window events and UI components
-const isFullscreenMode = ref<boolean>(false)
-let fullscreenTimer: ReturnType<typeof setInterval> | null = null
+const isFullscreenMode = ref<boolean>(false);
+let fullscreenTimer: ReturnType<typeof setInterval> | null = null;
 
 const handleFullscreenExit = () => {
-  isFullscreenMode.value = false
-  // Report immediate violation
-  reportViolation('Fullscreen rejimidan chiqildi. Iltimos qaytib kiring!', 1)
-  
-  // Start recurring penalty
+  isFullscreenMode.value = false;
+  reportViolation("Fullscreen rejimidan chiqildi. Iltimos qaytib kiring!", 1);
+
   if (isExamStarted.value) {
-    if (fullscreenTimer) clearInterval(fullscreenTimer)
+    if (fullscreenTimer) clearInterval(fullscreenTimer);
     fullscreenTimer = setInterval(() => {
-      reportViolation('Fullscreen rejimiga qayting! (Takroriy jarima)', 1)
-    }, 3000)
+      reportViolation("Fullscreen rejimiga qayting! (Takroriy jarima)", 1);
+    }, 3000);
   }
-}
+};
 
 const handleFullscreenRestored = () => {
-  isFullscreenMode.value = true
+  isFullscreenMode.value = true;
   if (fullscreenTimer) {
-    clearInterval(fullscreenTimer)
-    fullscreenTimer = null
+    clearInterval(fullscreenTimer);
+    fullscreenTimer = null;
   }
-}
+};
 
 const handleTabSwitch = () => {
-  reportViolation("Boshqa tab'ga o'tdingiz", 2)
-}
+  reportViolation("Boshqa tab'ga o'tdingiz", 2);
+};
 
 const handleAppSwitch = () => {
-  reportViolation("Boshqa ilovaga o'tdingiz", 3)
-}
+  reportViolation("Boshqa ilovaga o'tdingiz", 3);
+};
 
 const handlePageLeave = () => {
-  reportViolation('Sahifani tark etishga harakat qildingiz', 4)
-}
+  reportViolation("Sahifani tark etishga harakat qildingiz", 4);
+};
 
 const setupEnhancedMonitoring = () => {
-  document.addEventListener('visibilitychange', () => {
+  document.addEventListener("visibilitychange", () => {
     if (document.hidden && isFullscreenMode.value) {
-      handleTabSwitch()
+      handleTabSwitch();
     }
-  })
+  });
 
-  window.addEventListener('blur', () => {
+  window.addEventListener("blur", () => {
     if (isFullscreenMode.value) {
-      handleAppSwitch()
+      handleAppSwitch();
     }
-  })
+  });
 
-  document.addEventListener('fullscreenchange', () => {
-    const isFullscreen = !!document.fullscreenElement
-    isFullscreenMode.value = isFullscreen
+  document.addEventListener("fullscreenchange", () => {
+    const isFullscreen = !!document.fullscreenElement;
+    isFullscreenMode.value = isFullscreen;
     if (!isFullscreen && isFullscreenMode.value) {
-      handleFullscreenExit()
+      handleFullscreenExit();
     }
-  })
+  });
 
-  window.addEventListener('beforeunload', (event) => {
+  window.addEventListener("beforeunload", (event) => {
     if (isFullscreenMode.value) {
-      handlePageLeave()
-      event.preventDefault()
-      event.returnValue = 'Imtixonni tark etish mumkin emas!'
-      return 'Imtixonni tark etish mumkin emas!'
+      handlePageLeave();
+      event.preventDefault();
+      event.returnValue = "Imtixonni tark etish mumkin emas!";
+      return "Imtixonni tark etish mumkin emas!";
     }
-  })
+  });
 
-  document.addEventListener('keydown', (event) => {
+  document.addEventListener("keydown", (event) => {
     if (isFullscreenMode.value) {
       if (event.ctrlKey || event.metaKey) {
-        if (['t', 'w', 'r', 'n', 'l'].includes(event.key)) {
-          event.preventDefault()
-          reportViolation('Taqiqlangan tugma kombinatsiyasi', 5) // Generic ID
+        if (["t", "w", "r", "n", "l"].includes(event.key)) {
+          event.preventDefault();
+          reportViolation("Taqiqlangan tugma kombinatsiyasi", 5); // Generic ID
         }
-        if (event.key === 'Tab' && event.altKey) {
-          event.preventDefault()
-          handleAppSwitch()
+        if (event.key === "Tab" && event.altKey) {
+          event.preventDefault();
+          handleAppSwitch();
         }
       }
-      if (event.key === 'F11') {
-        event.preventDefault()
-        reportViolation('Fullscreen tugmasini ishlatish taqiqlangan', 10)
+      if (event.key === "F11") {
+        event.preventDefault();
+        reportViolation("Fullscreen tugmasini ishlatish taqiqlangan", 10);
       }
     }
-  })
-}
-
+  });
+};
 
 onMounted(() => {
-  initFaceDetection()
+  initFaceDetection();
 
-  // Listen for exam finished message from iframe
-  window.addEventListener('message', (event) => {
-    // Security check: ensure the message is what we expect
-    // You might want to check event.origin here if known
-    if (event.data && event.data.type === 'EXAM_FINISHED') {
-      
-      // Stop media resources
+  window.addEventListener("message", (event) => {
+    if (event.data && event.data.type === "EXAM_FINISHED") {
       if (video.value?.srcObject) {
-         const stream = video.value.srcObject as MediaStream;
-         stream.getTracks().forEach(track => track.stop());
-         video.value.srcObject = null;
+        const stream = video.value.srcObject as MediaStream;
+        stream.getTracks().forEach((track) => track.stop());
+        video.value.srcObject = null;
       }
-      stopMicrophone()
-      isFaceVerified.value = false 
-      isExamFinished.value = true // Prevent verification overlay from showing
-      
-      // Submit report
-      finishExam() 
+      stopMicrophone();
+      isFaceVerified.value = false;
+      isExamFinished.value = true;
+
+      finishExam();
     }
-  })
-})
+  });
+});
 
 onUnmounted(() => {
-  stopMicrophone()
-  // Note: Anonymous event listeners can't be removed easily unless stored in a variable, 
-  // but since the component is unmounting, it's often acceptable in simple cases. 
-  // For correctness, let's extract the handler if strictly needed, but for now this is fine 
-  // as the page context is likely destroyed or navigated away from.
-})
+  stopMicrophone();
+});
 </script>
 
 <style scoped>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
 .container {
   width: 100vw;
@@ -355,19 +324,29 @@ onUnmounted(() => {
 
 .camera-container.safe {
   border-color: #22c55e; /* Green 500 */
-  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.2), 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+  box-shadow:
+    0 0 0 4px rgba(34, 197, 94, 0.2),
+    0 10px 30px -10px rgba(0, 0, 0, 0.5);
 }
 
 .camera-container.violation {
   border-color: #ef4444; /* Red 500 */
-  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.2), 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+  box-shadow:
+    0 0 0 4px rgba(239, 68, 68, 0.2),
+    0 10px 30px -10px rgba(0, 0, 0, 0.5);
   animation: pulse-red 2s infinite;
 }
 
 @keyframes pulse-red {
-  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-  70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
 }
 
 .video {
@@ -412,8 +391,13 @@ onUnmounted(() => {
 }
 
 /* Remove old overlay/inside/outside styles */
-.overlay { display: none; }
-.inside, .outside { display: none; }
+.overlay {
+  display: none;
+}
+.inside,
+.outside {
+  display: none;
+}
 
 .verification-overlay {
   position: fixed;
@@ -436,13 +420,21 @@ onUnmounted(() => {
   text-align: center;
   max-width: 420px;
   width: 90%;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  box-shadow:
+    0 20px 25px -5px rgba(0, 0, 0, 0.1),
+    0 8px 10px -6px rgba(0, 0, 0, 0.1);
   animation: modal-pop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes modal-pop {
-  0% { transform: scale(0.95); opacity: 0; }
-  100% { transform: scale(1); opacity: 1; }
+  0% {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .verification-box h2 {
@@ -543,27 +535,27 @@ onUnmounted(() => {
     width: 280px;
     height: 280px;
   }
-  
+
   .verification-box {
     padding: 1.5rem;
     width: 95%;
     max-width: 360px;
     margin: 0 auto;
   }
-  
+
   .verification-box h2 {
     font-size: 1.25rem;
   }
-  
+
   .live-preview-container {
     height: 200px;
   }
-  
+
   .captured-preview {
     max-height: 200px;
     width: auto;
   }
-  
+
   .verify-btn {
     padding: 10px 20px;
     font-size: 14px;
