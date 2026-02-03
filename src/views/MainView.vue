@@ -552,34 +552,164 @@ onUnmounted(() => {
 
 /* Mobile Optimizations */
 @media (max-width: 768px) {
+  /* Camera container - smaller and better positioned for mobile */
   .camera-container {
-    width: 280px;
-    height: 280px;
+    bottom: 16px;
+    right: 16px;
+    width: 120px;
+    height: 120px;
   }
 
+  /* Status indicator - better positioning for smaller camera */
+  .status-indicator {
+    bottom: -32px;
+    width: 180px;
+  }
+
+  .status-text {
+    font-size: 11px;
+    padding: 4px 10px;
+  }
+
+  /* Verification modal - optimized for mobile screens */
   .verification-box {
     padding: 1.5rem;
     width: 95%;
     max-width: 360px;
     margin: 0 auto;
+    border-radius: 24px;
   }
 
   .verification-box h2 {
     font-size: 1.25rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .verification-box p {
+    font-size: 14px;
+    margin-bottom: 1rem;
+  }
+
+  /* Live preview - better aspect ratio for mobile */
+  .live-preview-container {
+    height: 200px;
+    max-width: 280px;
+    border-radius: 20px;
+  }
+
+  /* Captured preview - fit screen better */
+  .captured-preview {
+    max-height: 200px;
+    max-width: 280px;
+    width: auto;
+    border-radius: 20px;
+  }
+
+  /* Buttons - better touch targets */
+  .verify-btn {
+    padding: 12px 20px;
+    font-size: 15px;
+    border-radius: 14px;
+    min-height: 44px; /* iOS recommended touch target */
+  }
+
+  .buttons-row {
+    gap: 10px;
+    flex-direction: column;
+  }
+
+  .buttons-row .verify-btn {
+    width: 100%;
+  }
+}
+
+/* Extra small mobile devices */
+@media (max-width: 480px) {
+  /* Even smaller camera for very small screens */
+  .camera-container {
+    bottom: 12px;
+    right: 12px;
+    width: 100px;
+    height: 100px;
+    border-width: 3px;
+  }
+
+  .status-indicator {
+    bottom: -28px;
+    width: 160px;
+  }
+
+  .status-text {
+    font-size: 10px;
+    padding: 3px 8px;
+  }
+
+  /* Verification modal - even more compact */
+  .verification-box {
+    padding: 1.25rem;
+    width: 92%;
+    border-radius: 20px;
+  }
+
+  .verification-box h2 {
+    font-size: 1.125rem;
+  }
+
+  .verification-box p {
+    font-size: 13px;
   }
 
   .live-preview-container {
-    height: 200px;
+    height: 180px;
+    max-width: 240px;
+    border-radius: 16px;
   }
 
   .captured-preview {
-    max-height: 200px;
-    width: auto;
+    max-height: 180px;
+    max-width: 240px;
+    border-radius: 16px;
   }
 
   .verify-btn {
-    padding: 10px 20px;
     font-size: 14px;
+    padding: 10px 18px;
+  }
+}
+
+/* Landscape mobile devices */
+@media (max-width: 768px) and (orientation: landscape) {
+  /* Camera - move to top right in landscape */
+  .camera-container {
+    bottom: auto;
+    top: 12px;
+    right: 12px;
+    width: 90px;
+    height: 90px;
+  }
+
+  .status-indicator {
+    display: none; /* Hide status text in landscape to save space */
+  }
+
+  /* Verification modal - optimize for landscape */
+  .verification-box {
+    max-width: 500px;
+    padding: 1.25rem 2rem;
+  }
+
+  .live-preview-container {
+    height: 160px;
+    max-width: 220px;
+  }
+
+  .captured-preview {
+    max-height: 160px;
+    max-width: 220px;
+  }
+
+  .buttons-row {
+    flex-direction: row;
   }
 }
 </style>

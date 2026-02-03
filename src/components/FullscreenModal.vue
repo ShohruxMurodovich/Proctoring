@@ -442,14 +442,22 @@ onUnmounted(() => {
   
   .modal-content h2 {
     font-size: 1.25rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .modal-content > p {
+    font-size: 14px;
+    margin-bottom: 1.25rem;
   }
   
   .permission-status {
     gap: 8px;
+    margin: 1.25rem 0;
   }
   
   .permission-item {
     padding: 10px 12px;
+    border-radius: 14px;
   }
   
   .permission-text {
@@ -460,18 +468,122 @@ onUnmounted(() => {
     font-size: 18px;
     margin-right: 8px;
   }
+
+  .status-indicator {
+    font-size: 16px;
+  }
   
   .fullscreen-btn {
     padding: 12px 16px;
-    font-size: 14px;
+    font-size: 15px;
+    min-height: 44px; /* iOS recommended touch target */
+    border-radius: 14px;
   }
   
   .warning-text {
     padding: 12px;
+    margin: 1.25rem 0;
+    border-radius: 14px;
   }
   
   .warning-text p {
     font-size: 13px;
+  }
+
+  .error-message {
+    padding: 10px;
+    font-size: 13px;
+    border-radius: 14px;
+  }
+}
+
+/* Extra small mobile devices */
+@media (max-width: 480px) {
+  .modal-content {
+    padding: 1.25rem;
+    width: 92%;
+    border-radius: 20px;
+  }
+
+  .modal-content h2 {
+    font-size: 1.125rem;
+  }
+
+  .modal-content > p {
+    font-size: 13px;
+    margin-bottom: 1rem;
+  }
+
+  .permission-status {
+    gap: 6px;
+    margin: 1rem 0;
+  }
+
+  .permission-item {
+    padding: 8px 10px;
+  }
+
+  .permission-text {
+    font-size: 12px;
+  }
+
+  .permission-icon {
+    font-size: 16px;
+    margin-right: 6px;
+  }
+
+  .status-indicator {
+    font-size: 14px;
+  }
+
+  .fullscreen-btn {
+    font-size: 14px;
+    padding: 10px 14px;
+  }
+
+  .warning-text {
+    padding: 10px;
+  }
+
+  .warning-text p {
+    font-size: 12px;
+  }
+}
+
+/* Landscape mobile devices */
+@media (max-width: 768px) and (orientation: landscape) {
+  .modal-content {
+    max-width: 500px;
+    padding: 1.25rem 2rem;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+
+  .modal-content h2 {
+    font-size: 1.125rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .modal-content > p {
+    font-size: 13px;
+    margin-bottom: 1rem;
+  }
+
+  .permission-status {
+    margin: 1rem 0;
+  }
+
+  .permission-item {
+    padding: 8px 12px;
+  }
+
+  .warning-text {
+    margin: 1rem 0;
+    padding: 10px;
+  }
+
+  .warning-text p {
+    font-size: 12px;
   }
 }
 </style>
