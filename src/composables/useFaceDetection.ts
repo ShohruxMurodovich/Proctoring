@@ -15,7 +15,9 @@ import {
     CIRCLE_BOUNDARY_RADIUS,
     FACE_DETECTION_INTERVAL_MS,
     VIOLATION_PERSISTENCE_MS,
-    AUTO_PHOTO_INTERVAL_MS
+    AUTO_PHOTO_INTERVAL_MS,
+    FACE_VERIFICATION_INTERVAL_MS,
+    API_BASE_URL
 } from '@/constants'
 
 
@@ -38,6 +40,7 @@ export function useFaceDetection(
     const previewVideo = ref<HTMLVideoElement | null>(null)
     const capturedPhoto = ref<string | null>(null)
     const realUser = ref(false)
+    const currentFaceCount = ref(0) // Track number of faces detected
 
     // Smoothing histories
     const earHistory = ref<number[]>([])
@@ -191,6 +194,77 @@ export function useFaceDetection(
         return canvas.toDataURL('image/jpeg', 0.8)
     }
 
+    // Periodic Face Verification
+
+    let verificationInterval: number | null = null
+
+    /**
+     * Starts periodic face verification every 10 seconds.
+     * Captures current frame and sends to API to verify it's the same person.
+     * @param examId - The exam ID for verification
+     */
+    function startPeriodicFaceVerification(examId: string): void {
+        if (verificationInterval) {
+            clearInterval(verificationInterval)
+        }
+
+        verificationInterval = window.setInterval(async () => {
+            if (!isFaceVerified.value || !video.value) return
+
+            // Only verify if exactly one person is in camera
+            if (currentFaceCount.value !== 1) {
+                console.log(`Skipping face verification: ${currentFaceCount.value} face(s) detected`)
+                return
+            }
+
+            try {
+                // Capture current frame
+                const imageData = captureCurrentFrame()
+                if (!imageData) {
+                    console.warn('Failed to capture frame for verification')
+                    return
+                }
+
+                // Extract base64 without prefix
+                const base64Photo = imageData.includes(',') ? imageData.split(',')[1] : imageData
+
+                // Send to face ID verification API
+                const payload = {
+                    type: 'exam',
+                    exam_id: examId,
+                    photo: base64Photo
+                }
+
+                const res = await fetch(`${API_BASE_URL}/v1/faceId`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                })
+
+                const data = await res.json().catch(() => ({}))
+
+                if (res.ok && data?.data === false) {
+                    // Face verification failed - different person detected
+                    violationHandler.reportViolation("Yuz tasdiqlanmadi! (Boshqa odam)", 22)
+                }
+            } catch (error) {
+                console.error('Periodic face verification error:', error)
+            }
+        }, FACE_VERIFICATION_INTERVAL_MS)
+    }
+
+    /**
+     * Stops periodic face verification.
+     */
+    function stopPeriodicFaceVerification(): void {
+        if (verificationInterval) {
+            clearInterval(verificationInterval)
+            verificationInterval = null
+        }
+    }
+
     /**
      * Attaches video stream to preview element.
      */
@@ -227,12 +301,21 @@ export function useFaceDetection(
             const resized = faceapi.resizeResults(detections, displaySize)
             context.clearRect(0, 0, canvas.width, canvas.height)
 
+            // Update face count for periodic verification
+            currentFaceCount.value = resized.length
+
             // Draw circle boundary
             context.beginPath()
             context.arc(circleCenterX, circleCenterY, CIRCLE_BOUNDARY_RADIUS, 0, 2 * Math.PI)
             context.strokeStyle = 'green'  // Will be updated based on violations
             context.lineWidth = 4
             context.stroke()
+
+            // Check for multiple people in camera
+            if (resized.length > 1) {
+                handleViolationCandidate("Yana bir odam aniqlandi! (Faqat siz bo'lishingiz kerak)", 21)
+                return
+            }
 
             if (resized.length > 0) {
                 analyzeDetection(resized[0])
@@ -405,6 +488,8 @@ export function useFaceDetection(
         takePhoto,
         retakePhoto,
         attachPreviewStream,
-        captureCurrentFrame
+        captureCurrentFrame,
+        startPeriodicFaceVerification,
+        stopPeriodicFaceVerification
     }
 }

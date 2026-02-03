@@ -84,6 +84,8 @@ const {
   takePhoto,
   retakePhoto,
   captureCurrentFrame,
+  startPeriodicFaceVerification,
+  stopPeriodicFaceVerification,
 } = useFaceDetection({ 
   reportViolation: (message: string, errorId: number) => {
     if (tempReportViolation.value) {
@@ -166,6 +168,9 @@ const handleExamStart = () => {
   setupMicrophone();
   setupEnhancedMonitoring();
   startExam();
+  
+  // Start periodic face verification every 10 seconds
+  startPeriodicFaceVerification(examId.value);
 };
 
 const isFullscreenMode = ref<boolean>(false);
@@ -264,6 +269,7 @@ onMounted(() => {
         video.value.srcObject = null;
       }
       stopMicrophone();
+      stopPeriodicFaceVerification(); // Stop periodic verification
       isFaceVerified.value = false;
       isExamFinished.value = true;
 
@@ -274,6 +280,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopMicrophone();
+  stopPeriodicFaceVerification(); // Cleanup on unmount
 });
 </script>
 
