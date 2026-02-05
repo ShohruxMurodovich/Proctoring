@@ -25,6 +25,7 @@ export default defineConfig({
   },
   base: './',
   server: {
+    host: '0.0.0.0', // Allow network access
     allowedHosts: ['exam.kasbiy-talim.uz']
   },
   preview: {

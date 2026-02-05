@@ -21,7 +21,7 @@
           <span class="status-indicator">{{ microphonePermission ? '✓' : '✗' }}</span>
         </div>
 
-        <div class="permission-item" :class="{ 'granted': screenPermission, 'denied': !screenPermission }">
+        <div v-if="!isMobileDevice" class="permission-item" :class="{ 'granted': screenPermission, 'denied': !screenPermission }">
           <span class="permission-icon">🖥️</span>
           <span class="permission-text">
             {{ screenPermission ? 'Ekran yozuviga ruxsat berildi' : 'Ekran yozuviga ruxsat kerak' }}
@@ -71,14 +71,21 @@ const emit = defineEmits<{
 // Track if user has entered fullscreen at least once
 const hasEnteredFullscreen = ref(false)
 
+// Detect if user is on mobile device
+const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+
 // Permission states
 const cameraPermission = ref(false)
 const microphonePermission = ref(false)
-const screenPermission = ref(false)
+const screenPermission = ref(false) // Not required on mobile
 const isRequesting = ref(false)
 const errorMessage = ref('')
 
 const allPermissionsGranted = computed(() => {
+  // On mobile, screen recording is not required
+  if (isMobileDevice) {
+    return cameraPermission.value && microphonePermission.value
+  }
   return cameraPermission.value && microphonePermission.value && screenPermission.value
 })
 
@@ -92,9 +99,17 @@ const handleButtonClick = () => {
 
 
 const enterFullscreen = async () => {
-  if (!cameraPermission.value || !microphonePermission.value || !screenPermission.value) {
-    errorMessage.value = 'Avval kamera, mikrofon va ekran yozuvi ruxsatlarini bering!'
-    return
+  // Check required permissions (screen not required on mobile)
+  if (isMobileDevice) {
+    if (!cameraPermission.value || !microphonePermission.value) {
+      errorMessage.value = 'Avval kamera va mikrofon ruxsatlarini bering!'
+      return
+    }
+  } else {
+    if (!cameraPermission.value || !microphonePermission.value || !screenPermission.value) {
+      errorMessage.value = 'Avval kamera, mikrofon va ekran yozuvi ruxsatlarini bering!'
+      return
+    }
   }
 
   try {
@@ -141,21 +156,33 @@ const requestAllPermissions = async () => {
     // We only needed permissions; stop tracks to free devices
     avStream.getTracks().forEach(t => t.stop())
 
-    // 2) Screen capture (with system audio when available)
-    const mediaDevices = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (constraints: MediaStreamConstraints) => Promise<MediaStream> }
-    const getDisplay = mediaDevices.getDisplayMedia ? mediaDevices.getDisplayMedia.bind(mediaDevices) : (navigator as unknown as { getDisplayMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream> }).getDisplayMedia
-    const displayStream = await getDisplay({ video: true, audio: true })
-    screenPermission.value = true
-    emit('screenRecordingStarted', displayStream)
+    // 2) Screen capture (only for desktop, not available on mobile)
+    if (!isMobileDevice) {
+      const mediaDevices = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (constraints: MediaStreamConstraints) => Promise<MediaStream> }
+      const getDisplay = mediaDevices.getDisplayMedia ? mediaDevices.getDisplayMedia.bind(mediaDevices) : (navigator as unknown as { getDisplayMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream> }).getDisplayMedia
+      const displayStream = await getDisplay({ video: true, audio: true })
+      screenPermission.value = true
+      emit('screenRecordingStarted', displayStream)
+    } else {
+      // Skip screen recording on mobile
+      screenPermission.value = true // Mark as granted to allow proceeding
+    }
 
-    if (!cameraPermission.value || !microphonePermission.value || !screenPermission.value) {
-      errorMessage.value = 'Iltimos, barcha ruxsatlarni bering (kamera, mikrofon, ekran).'
+    // Check if all required permissions are granted
+    const requiredPermissions = isMobileDevice 
+      ? cameraPermission.value && microphonePermission.value
+      : cameraPermission.value && microphonePermission.value && screenPermission.value
+    
+    if (!requiredPermissions) {
+      errorMessage.value = isMobileDevice 
+        ? 'Iltimos, barcha ruxsatlarni bering (kamera, mikrofon).'
+        : 'Iltimos, barcha ruxsatlarni bering (kamera, mikrofon, ekran).'
     }
   } catch (err) {
     console.error('All permission request failed:', err)
     if (!cameraPermission.value || !microphonePermission.value) {
       errorMessage.value = 'Kamera/mikrofon ruxsati berilmadi. Brauzer sozlamalarini tekshiring.'
-    } else {
+    } else if (!isMobileDevice) {
       errorMessage.value = 'Ekran yozuviga ruxsat berilmadi. Qayta urinib ko\'ring.'
     }
   } finally {
