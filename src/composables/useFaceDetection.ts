@@ -52,6 +52,10 @@ export function useFaceDetection(
     let currentViolationId: number | null = null
     let photoInterval: number | null = null
 
+    // Video recording state
+    let mediaRecorder: MediaRecorder | null = null
+    let videoChunks: Blob[] = []
+
     /**
      * Calculates Eye Aspect Ratio (EAR) for blink detection.
      * Reference: Soukupová and Čech
@@ -263,6 +267,93 @@ export function useFaceDetection(
             clearInterval(verificationInterval)
             verificationInterval = null
         }
+    }
+
+    // Video Recording Functions
+
+    /**
+     * Starts video recording of the user's face.
+     * Uses the same video stream from the camera.
+     */
+    function startVideoRecording(): void {
+        if (!video.value || !video.value.srcObject) {
+            console.error('Cannot start video recording: no video stream available')
+            return
+        }
+
+        try {
+            const stream = video.value.srcObject as MediaStream
+
+            // Initialize MediaRecorder with WebM format
+            const options: MediaRecorderOptions = {
+                mimeType: 'video/webm;codecs=vp8',
+                videoBitsPerSecond: 1000000 // 1 Mbps
+            }
+
+            // Fallback if webm is not supported
+            if (!MediaRecorder.isTypeSupported(options.mimeType!)) {
+                console.warn('WebM not supported, trying default format')
+                mediaRecorder = new MediaRecorder(stream)
+            } else {
+                mediaRecorder = new MediaRecorder(stream, options)
+            }
+
+            // Reset chunks array
+            videoChunks = []
+
+            // Collect video chunks
+            mediaRecorder.ondataavailable = (event: BlobEvent) => {
+                if (event.data && event.data.size > 0) {
+                    videoChunks.push(event.data)
+                }
+            }
+
+            // Start recording (collect data every 10 seconds)
+            mediaRecorder.start(10000)
+            console.log('Video recording started')
+        } catch (error) {
+            console.error('Failed to start video recording:', error)
+        }
+    }
+
+    /**
+     * Stops video recording and returns the recorded video as a Blob.
+     * @returns Promise<Blob | null> The recorded video blob
+     */
+    function stopVideoRecording(): Promise<Blob | null> {
+        return new Promise((resolve) => {
+            if (!mediaRecorder) {
+                console.warn('No active media recorder to stop')
+                resolve(null)
+                return
+            }
+
+            // Set up handler for when recording stops
+            mediaRecorder.onstop = () => {
+                if (videoChunks.length === 0) {
+                    console.warn('No video chunks recorded')
+                    resolve(null)
+                    return
+                }
+
+                // Create blob from chunks
+                const videoBlob = new Blob(videoChunks, { type: 'video/webm' })
+                console.log(`Video recording stopped. Size: ${(videoBlob.size / 1024 / 1024).toFixed(2)} MB`)
+
+                // Clean up
+                videoChunks = []
+                mediaRecorder = null
+
+                resolve(videoBlob)
+            }
+
+            // Stop the recorder
+            if (mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop()
+            } else {
+                resolve(null)
+            }
+        })
     }
 
     /**
@@ -490,6 +581,8 @@ export function useFaceDetection(
         attachPreviewStream,
         captureCurrentFrame,
         startPeriodicFaceVerification,
-        stopPeriodicFaceVerification
+        stopPeriodicFaceVerification,
+        startVideoRecording,
+        stopVideoRecording
     }
 }

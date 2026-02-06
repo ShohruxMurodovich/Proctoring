@@ -45,6 +45,7 @@ export function useProctoring(examId: string, captureImage?: () => string | null
     const text = ref('')
     const userScore = ref(INITIAL_SCORE)
     const isExamStarted = ref(false)
+    const recordedVideoId = ref<string | null>(null) // Store uploaded video ID
 
 
 
@@ -194,6 +195,47 @@ export function useProctoring(examId: string, captureImage?: () => string | null
     }
 
     /**
+     * Uploads the recorded video to the API and stores the video ID.
+     * @param videoBlob - The recorded video blob
+     * @returns Promise<string | null> The uploaded video ID
+     */
+    async function uploadVideo(videoBlob: Blob | null): Promise<string | null> {
+        if (!videoBlob) {
+            console.warn('No video blob to upload')
+            return null
+        }
+
+        try {
+            const formData = new FormData()
+            formData.append('file', videoBlob, 'exam-recording.webm')
+
+            const url = `https://kasbiy-talim.uz/services/platon-core/web/v1/public/files/upload/category/record`
+            const res = await fetch(url, {
+                method: 'POST',
+                body: formData
+            })
+
+            if (!res.ok) {
+                throw new Error(`Upload failed: ${res.status}`)
+            }
+
+            const data = await res.json()
+
+            if (data && data.id) {
+                recordedVideoId.value = data.id
+                console.log(`Video uploaded successfully. ID: ${data.id}`)
+                return data.id
+            } else {
+                console.error('Upload response missing video ID:', data)
+                return null
+            }
+        } catch (error) {
+            console.error('Video upload failed:', error)
+            return null
+        }
+    }
+
+    /**
      * Submits the final report of all violations.
      */
     async function finishExam() {
@@ -202,7 +244,8 @@ export function useProctoring(examId: string, captureImage?: () => string | null
         try {
             const payload = {
                 exam_id: examId,
-                errors: sessionErrors.value
+                errors: sessionErrors.value,
+                video: recordedVideoId.value // Include video ID in final report
             }
 
             const res = await fetch(`${API_BASE_URL}/v1/exam/errors`, {
@@ -240,6 +283,7 @@ export function useProctoring(examId: string, captureImage?: () => string | null
         resetViolationState,
         startExam,
         stopProctoring,
-        finishExam
+        finishExam,
+        uploadVideo
     }
 }

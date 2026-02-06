@@ -86,6 +86,8 @@ const {
   captureCurrentFrame,
   startPeriodicFaceVerification,
   stopPeriodicFaceVerification,
+  startVideoRecording,
+  stopVideoRecording,
 } = useFaceDetection({ 
   reportViolation: (message: string, errorId: number) => {
     if (tempReportViolation.value) {
@@ -109,6 +111,7 @@ const {
   startExam,
   isExamStarted,
   finishExam,
+  uploadVideo,
 } = useProctoring(examId.value, captureCurrentFrame);
 
 // Connect the functions
@@ -171,6 +174,9 @@ const handleExamStart = () => {
   
   // Start periodic face verification every 10 seconds
   startPeriodicFaceVerification(examId.value);
+  
+  // Start video recording of face
+  startVideoRecording();
 };
 
 const isFullscreenMode = ref<boolean>(false);
@@ -261,7 +267,7 @@ const setupEnhancedMonitoring = () => {
 onMounted(() => {
   initFaceDetection();
 
-  window.addEventListener("message", (event) => {
+  window.addEventListener("message", async (event) => {
     if (event.data && event.data.type === "EXAM_FINISHED") {
       if (video.value?.srcObject) {
         const stream = video.value.srcObject as MediaStream;
@@ -272,6 +278,17 @@ onMounted(() => {
       stopPeriodicFaceVerification(); // Stop periodic verification
       isFaceVerified.value = false;
       isExamFinished.value = true;
+
+      // Stop video recording and upload
+      try {
+        const videoBlob = await stopVideoRecording();
+        if (videoBlob) {
+          console.log('Uploading recorded video...');
+          await uploadVideo(videoBlob);
+        }
+      } catch (error) {
+        console.error('Failed to upload video:', error);
+      }
 
       finishExam();
     }
