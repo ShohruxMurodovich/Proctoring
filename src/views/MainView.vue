@@ -222,10 +222,16 @@ const handleExamStart = () => {
   startVideoRecording();
 };
 
+// Detect if user is on mobile device
+const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
 const isFullscreenMode = ref<boolean>(false);
 let fullscreenTimer: ReturnType<typeof setInterval> | null = null;
 
 const handleFullscreenExit = () => {
+  // Skip fullscreen checks on mobile devices
+  if (isMobileDevice) return;
+
   isFullscreenMode.value = false;
   reportViolation("Fullscreen rejimidan chiqildi. Iltimos qaytib kiring!", 1);
 
@@ -238,6 +244,9 @@ const handleFullscreenExit = () => {
 };
 
 const handleFullscreenRestored = () => {
+  // Skip fullscreen checks on mobile devices
+  if (isMobileDevice) return;
+
   isFullscreenMode.value = true;
   if (fullscreenTimer) {
     clearInterval(fullscreenTimer);
@@ -270,13 +279,16 @@ const setupEnhancedMonitoring = () => {
     }
   });
 
-  document.addEventListener("fullscreenchange", () => {
-    const isFullscreen = !!document.fullscreenElement;
-    isFullscreenMode.value = isFullscreen;
-    if (!isFullscreen && isFullscreenMode.value) {
-      handleFullscreenExit();
-    }
-  });
+  // Skip fullscreen monitoring on mobile devices
+  if (!isMobileDevice) {
+    document.addEventListener("fullscreenchange", () => {
+      const isFullscreen = !!document.fullscreenElement;
+      isFullscreenMode.value = isFullscreen;
+      if (!isFullscreen && isFullscreenMode.value) {
+        handleFullscreenExit();
+      }
+    });
+  }
 
   window.addEventListener("beforeunload", (event) => {
     if (isFullscreenMode.value) {
@@ -299,7 +311,8 @@ const setupEnhancedMonitoring = () => {
           handleAppSwitch();
         }
       }
-      if (event.key === "F11") {
+      // Skip F11 check on mobile devices
+      if (!isMobileDevice && event.key === "F11") {
         event.preventDefault();
         reportViolation("Fullscreen tugmasini ishlatish taqiqlangan", 10);
       }

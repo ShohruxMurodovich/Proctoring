@@ -113,6 +113,15 @@ const enterFullscreen = async () => {
   }
 
   try {
+    // Skip fullscreen on mobile devices as it's not supported
+    if (isMobileDevice) {
+      hasEnteredFullscreen.value = true
+      showModal.value = false
+      emit('started')
+      return
+    }
+
+    // Request fullscreen on desktop
     if (document.documentElement.requestFullscreen) {
       await document.documentElement.requestFullscreen()
     } else if ((document.documentElement as unknown as Element & { webkitRequestFullscreen?: () => Promise<void> }).webkitRequestFullscreen) {
@@ -192,6 +201,9 @@ const requestAllPermissions = async () => {
 
 // Monitor fullscreen changes
 const handleFullscreenChange = () => {
+  // Skip fullscreen monitoring on mobile devices
+  if (isMobileDevice) return
+
   const isFullscreen = document.fullscreenElement !== null
   if (isFullscreen && hasEnteredFullscreen.value) {
     emit('fullscreenRestored')
