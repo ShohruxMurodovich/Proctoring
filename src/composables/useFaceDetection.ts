@@ -19,6 +19,7 @@ import {
     FACE_VERIFICATION_INTERVAL_MS,
     API_BASE_URL
 } from '@/constants'
+import { useBrowserCompatibility } from './useBrowserCompatibility'
 
 
 
@@ -41,6 +42,11 @@ export function useFaceDetection(
     const capturedPhoto = ref<string | null>(null)
     const realUser = ref(false)
     const currentFaceCount = ref(0) // Track number of faces detected
+    const cameraPermissionStatus = ref<'prompt' | 'granted' | 'denied' | 'error'>('prompt')
+    const cameraError = ref<string | null>(null)
+
+    // Browser compatibility
+    const { getPreferredMimeType } = useBrowserCompatibility()
 
     // Smoothing histories
     const earHistory = ref<number[]>([])
@@ -274,6 +280,7 @@ export function useFaceDetection(
     /**
      * Starts video recording of the user's face.
      * Uses the same video stream from the camera.
+     * Now with Opera-compatible codec fallback.
      */
     function startVideoRecording(): void {
         if (!video.value || !video.value.srcObject) {
@@ -284,19 +291,25 @@ export function useFaceDetection(
         try {
             const stream = video.value.srcObject as MediaStream
 
-            // Initialize MediaRecorder with WebM format
-            const options: MediaRecorderOptions = {
-                mimeType: 'video/webm;codecs=vp8',
-                videoBitsPerSecond: 1000000 // 1 Mbps
+            // Get best supported MIME type for this browser
+            const preferredMimeType = getPreferredMimeType()
+
+            let mediaRecorderOptions: MediaRecorderOptions | undefined
+
+            if (preferredMimeType) {
+                mediaRecorderOptions = {
+                    mimeType: preferredMimeType,
+                    videoBitsPerSecond: 1000000 // 1 Mbps
+                }
+                console.log(`Using MediaRecorder with MIME type: ${preferredMimeType}`)
+            } else {
+                console.warn('No supported MIME types found, using browser default')
             }
 
-            // Fallback if webm is not supported
-            if (!MediaRecorder.isTypeSupported(options.mimeType!)) {
-                console.warn('WebM not supported, trying default format')
-                mediaRecorder = new MediaRecorder(stream)
-            } else {
-                mediaRecorder = new MediaRecorder(stream, options)
-            }
+            // Initialize MediaRecorder
+            mediaRecorder = mediaRecorderOptions
+                ? new MediaRecorder(stream, mediaRecorderOptions)
+                : new MediaRecorder(stream)
 
             // Reset chunks array
             videoChunks = []
@@ -506,31 +519,80 @@ export function useFaceDetection(
 
     // Initialization
 
+
     /**
-     * Loads face-api models and initializes camera.
+     * Loads face-api models and initializes camera with permission checks.
      */
     async function initialize(): Promise<void> {
-        await faceapi.nets.tinyFaceDetector.loadFromUri('/models')
-        await faceapi.nets.faceLandmark68Net.loadFromUri('/models')
+        try {
+            cameraPermissionStatus.value = 'prompt'
+            cameraError.value = null
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-                width: { ideal: 300 },
-                height: { ideal: 300 },
-                facingMode: 'user'
-            },
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true
+            // Load face detection models
+            await faceapi.nets.tinyFaceDetector.loadFromUri('/models')
+            await faceapi.nets.faceLandmark68Net.loadFromUri('/models')
+
+
+            // Request camera access
+            const constraints: MediaStreamConstraints = {
+                video: {
+                    width: { ideal: 300 },
+                    height: { ideal: 300 },
+                    facingMode: 'user'
+                },
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
             }
-        })
 
-        if (video.value) {
-            video.value.srcObject = stream
-            video.value.addEventListener('play', onVideoPlay)
-            // Immediately attach to preview if available
-            attachPreviewStream()
+            const stream = await navigator.mediaDevices.getUserMedia(constraints)
+
+            cameraPermissionStatus.value = 'granted'
+
+            if (video.value) {
+                video.value.srcObject = stream
+                video.value.addEventListener('play', onVideoPlay)
+                // Immediately attach to preview if available
+                attachPreviewStream()
+            }
+        } catch (error: any) {
+            console.error('Camera initialization failed:', error)
+
+            // Handle specific errors
+            if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                cameraPermissionStatus.value = 'denied'
+                cameraError.value = 'Kamera ruxsati rad etildi. Brauzer sozlamalarida kamera ruxsatini yoqing:\n1. URL qatoridagi kamera belgisiga bosing\n2. "Allow" yoki "Ruxsat berish" tanlang\n3. Sahifani yangilang'
+            } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+                cameraPermissionStatus.value = 'error'
+                cameraError.value = 'Kamera topilmadi. Iltimos kamera ulangan va ishlaganligini tekshiring.'
+            } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+                cameraPermissionStatus.value = 'error'
+                cameraError.value = 'Kameraga kirish imkoni yoq. Boshqa dastur kameradan foydalanayotgan bolishi mumkin.'
+            } else {
+                cameraPermissionStatus.value = 'error'
+                cameraError.value = 'Kamerani ishga tushirishda xatolik yuz berdi. Iltimos sahifani yangilang.'
+            }
+
+        }
+    }
+
+    /**
+     * Requests camera permission explicitly (for retry after denial)
+     */
+    async function requestCameraPermission(): Promise<boolean> {
+        try {
+            // Clear previous error state
+            cameraError.value = null
+            cameraPermissionStatus.value = 'prompt'
+
+            // Re-initialize camera - this will trigger getUserMedia and show permission prompt
+            await initialize()
+            return true
+        } catch (error) {
+            console.error('Retry camera permission failed:', error)
+            return false
         }
     }
 
@@ -575,7 +637,10 @@ export function useFaceDetection(
         previewVideo,
         capturedPhoto,
         realUser,
+        cameraPermissionStatus,
+        cameraError,
         initialize,
+        requestCameraPermission,
         takePhoto,
         retakePhoto,
         attachPreviewStream,

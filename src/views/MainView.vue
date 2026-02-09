@@ -1,5 +1,10 @@
 <template>
   <div class="container">
+    <!-- Browser compatibility check -->
+    <div v-if="!hasFullSupport" class="compatibility-banner">
+      <p>⚠️ {{ browserInfo.name }} {{ browserInfo.version }} ishlatilmoqda</p>
+    </div>
+
     <FullscreenModal
       v-if="isFaceVerified"
       @fullscreenExit="handleFullscreenExit"
@@ -17,27 +22,58 @@
       allow="camera *; microphone *; display-capture *; fullscreen *"
     ></iframe>
 
-    <div v-if="!isFaceVerified && !isExamFinished && video" class="verification-overlay">
+    <div v-if="!isFaceVerified && !isExamFinished" class="verification-overlay">
       <div class="verification-box">
         <h2>Imtixonni Boshlash</h2>
 
-        <div v-if="!capturedPhoto">
-          <p>Iltimos, imtixonni boshlash uchun yuzingizni tasdiqlang</p>
-          <div class="live-preview-container">
-            <video ref="previewVideo" class="live-preview" autoplay muted playsinline></video>
-          </div>
-          <button @click="takePhoto" class="verify-btn">Rasmga olish</button>
+        <!-- Browser compatibility warning -->
+        <div v-if="compatibilityWarnings.length > 0" class="browser-warning">
+          <p><strong>⚠️ Brauzer Ogohlantirishlari:</strong></p>
+          <ul>
+            <li v-for="(warning, index) in compatibilityWarnings" :key="index">{{ warning }}</li>
+          </ul>
         </div>
 
-        <div v-else>
-          <img :src="capturedPhoto" class="captured-preview" />
-          <p v-if="text" style="color: red; margin: 10px 0">{{ text }}</p>
-          <div class="buttons-row">
-            <button @click="retakePhoto" class="verify-btn secondary">Qayta olish</button>
-            <button @click="confirmVerification" class="verify-btn" :disabled="isVerifying">
-              {{ isVerifying ? "Yuborilmoqda..." : "Yuborish" }}
+        <!-- Camera permission error -->
+        <div v-if="cameraError && (cameraPermissionStatus === 'denied' || cameraPermissionStatus === 'error')" class="camera-error">
+          <p style="color: #dc2626; margin: 10px 0 16px 0; font-weight: 600; white-space: pre-line; line-height: 1.6; text-align: left;">
+            {{ cameraError }}
+          </p>
+          <button @click="retryCameraAccess" class="verify-btn">Qayta urinish</button>
+        </div>
+
+        <!-- Camera working, show verification UI -->
+        <div v-else-if="cameraPermissionStatus === 'granted' && video">
+          <div v-if="!capturedPhoto">
+            <p>Iltimos, imtixonni boshlash uchun yuzingizni tasdiqlang</p>
+            <div class="live-preview-container">
+              <video ref="previewVideo" class="live-preview" autoplay muted playsinline></video>
+            </div>
+            <button 
+              @click="takePhoto" 
+              class="verify-btn"
+              :disabled="cameraPermissionStatus !== 'granted'"
+            >
+              Rasmga olish
             </button>
           </div>
+
+          <div v-else>
+            <img :src="capturedPhoto" class="captured-preview" />
+            <p v-if="text" style="color: red; margin: 10px 0">{{ text }}</p>
+            <div class="buttons-row">
+              <button @click="retakePhoto" class="verify-btn secondary">Qayta olish</button>
+              <button @click="confirmVerification" class="verify-btn" :disabled="isVerifying">
+                {{ isVerifying ? "Yuborilmoqda..." : "Yuborish" }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Camera initializing -->
+        <div v-else class="camera-loading">
+          <p>Kamera ishga tushirilmoqda...</p>
+          <div class="spinner"></div>
         </div>
       </div>
     </div>
@@ -62,6 +98,7 @@ import FullscreenModal from "@/components/FullscreenModal.vue";
 import { useProctoring } from "@/composables/useProctoring";
 import { useMicrophone } from "@/composables/useMicrophone";
 import { useFaceDetection } from "@/composables/useFaceDetection";
+import { useBrowserCompatibility } from "@/composables/useBrowserCompatibility";
 
 const route = useRoute();
 const examId = ref((route.query.exam_id as string) || "");
@@ -70,6 +107,9 @@ const isFaceVerified = ref(false);
 const isVerifying = ref(false);
 const isExamFinished = ref(false);
 const showExamIframe = ref(false);
+
+// Browser compatibility
+const { browserInfo, hasFullSupport, compatibilityWarnings } = useBrowserCompatibility();
 
 // Create temporary refs for face detection
 const tempReportViolation = ref<((message: string, errorId: number) => void) | null>(null);
@@ -80,7 +120,10 @@ const {
   video,
   previewVideo,
   capturedPhoto,
+  cameraPermissionStatus,
+  cameraError,
   initialize: initFaceDetection,
+  requestCameraPermission,
   takePhoto,
   retakePhoto,
   captureCurrentFrame,
@@ -264,6 +307,13 @@ const setupEnhancedMonitoring = () => {
   });
 };
 
+/**
+ * Retry camera access if permission was denied or error occurred
+ */
+const retryCameraAccess = async () => {
+  await requestCameraPermission();
+};
+
 onMounted(() => {
   initFaceDetection();
 
@@ -303,6 +353,7 @@ onUnmounted(() => {
 
 <style scoped>
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+@import "@/assets/browser-compat.css";
 
 .container {
   width: 100vw;
