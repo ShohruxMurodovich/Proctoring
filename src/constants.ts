@@ -104,4 +104,4 @@ export const MIC_VIOLATION_COOLDOWN_MS = 5000
 
 
 /** Maximum upload size for recordings (bytes) */
-export const MAX_UPLOAD_BYTES = 256 * 1024 * 1024 // 256MB
+export const MAX_UPLOAD_BYTES = 60 * 1024 * 1024 // 256MB

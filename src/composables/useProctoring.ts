@@ -67,7 +67,7 @@ export function useProctoring(examId: string, captureImage?: () => string | null
                         sessionErrors.value = data.data.user_err.map((e: any) => ({
                             err_id: e.err_id,
                             ball: e.ball,
-                            img: e.img  // Capture image data from API
+                            img: e.img  
                         }))
                     }
                 }
