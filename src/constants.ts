@@ -103,5 +103,11 @@ export const MIC_VIOLATION_COOLDOWN_MS = 5000
 
 
 
-/** Maximum upload size for recordings (bytes) */
-export const MAX_UPLOAD_BYTES = 60 * 1024 * 1024 // 256MB
+/** Maximum upload size for recordings (60MB to fit within 64MB API limit) */
+export const MAX_UPLOAD_BYTES = 60 * 1024 * 1024
+
+/** Video recording bitrate (bps) - 250kbps for ~2MB/min */
+export const VIDEO_BITRATE_BPS = 250000
+
+/** Video recording framerate (fps) */
+export const VIDEO_FRAMERATE = 10

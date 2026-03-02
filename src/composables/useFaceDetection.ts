@@ -17,7 +17,9 @@ import {
     VIOLATION_PERSISTENCE_MS,
     AUTO_PHOTO_INTERVAL_MS,
     FACE_VERIFICATION_INTERVAL_MS,
-    API_BASE_URL
+    API_BASE_URL,
+    VIDEO_BITRATE_BPS,
+    VIDEO_FRAMERATE
 } from '@/constants'
 import { useBrowserCompatibility } from './useBrowserCompatibility'
 
@@ -299,7 +301,7 @@ export function useFaceDetection(
             if (preferredMimeType) {
                 mediaRecorderOptions = {
                     mimeType: preferredMimeType,
-                    videoBitsPerSecond: 1000000 // 1 Mbps
+                    videoBitsPerSecond: VIDEO_BITRATE_BPS
                 }
                 console.log(`Using MediaRecorder with MIME type: ${preferredMimeType}`)
             } else {
@@ -538,7 +540,8 @@ export function useFaceDetection(
                 video: {
                     width: { ideal: 300 },
                     height: { ideal: 300 },
-                    facingMode: 'user'
+                    facingMode: 'user',
+                    frameRate: { ideal: VIDEO_FRAMERATE, max: 15 }
                 },
                 audio: {
                     echoCancellation: true,
@@ -579,7 +582,7 @@ export function useFaceDetection(
     }
 
     /**
-     * Requests camera permission explicitly (for retry after denial)
+     * Requests camera permission explicitly (for retry after denial)useFaceDetection
      */
     async function requestCameraPermission(): Promise<boolean> {
         try {
